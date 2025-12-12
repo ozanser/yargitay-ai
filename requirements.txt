@@ -1,0 +1,6 @@
+streamlit
+pytesseract
+pillow
+sentence-transformers
+supabase
+numpy
