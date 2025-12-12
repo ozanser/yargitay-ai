@@ -218,4 +218,11 @@ with tab2:
                         st.markdown("---")
                         c1, c2 = st.columns([1, 4])
                         with c1:
-                            puan = int(r['skor']
+                            puan = int(r['skor'] * 100)
+                            st.metric("Uygunluk", f"%{puan}")
+                            if puan > 80: st.success("Yüksek")
+                            elif puan > 50: st.warning("Orta")
+                            else: st.info("Düşük")
+                        with c2: st.info(r['metin'])
+                else: st.warning("Sonuç yok")
+        else: st.warning("Yazınız.")
