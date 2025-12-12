@@ -9,17 +9,12 @@ import json
 # --- 1. AYARLAR VE KURULUM ---
 st.set_page_config(page_title="Yargıtay AI Asistanı", layout="wide", page_icon="⚖️")
 
-# Windows kullanıcıları için Tesseract yolu (Eğer sunucuda çalışıyorsa bu satırı yorum yapabilirsin)
-# pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
 # --- 2. GÜVENLİK VE BAĞLANTILAR ---
-# Not: GitHub'a yüklerken şifreleri buraya yazma, Streamlit Secrets kullan!
-# Local test için geçici olarak buraya yazabilirsin.
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 except:
-    # Eğer secrets yoksa (bilgisayarında test ediyorsan) burayı doldur:
+    # Local test için (Secrets yoksa)
     SUPABASE_URL = "SENIN_SUPABASE_URL_ADRESIN"
     SUPABASE_KEY = "SENIN_SUPABASE_ANON_KEY_ANAHTARIN"
 
@@ -38,35 +33,24 @@ def model_yukle():
 
 model = model_yukle()
 
-# --- 3. KRİTİK BÖLÜM: GÖRÜNTÜ İYİLEŞTİRME ---
+# --- 3. GÖRÜNTÜ İŞLEME ---
 
 def resim_on_isleme(image):
-    """
-    Renkli ve karmaşık arka planlı resimleri OCR için hazırlar.
-    Resmi gri yapar ve kontrastı artırarak yazıları ortaya çıkarır.
-    """
-    # 1. Gri tona çevir (Siyah-Beyaz)
+    """Görüntüyü gri yapar ve kontrastı artırır."""
     img = image.convert('L')
-    
-    # 2. Kontrastı artır (Yazıyı arka plandan ayır)
     enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(2.0)  # Kontrastı 2 katına çıkar
-    
-    # 3. (Opsiyonel) Keskinleştirme
+    img = enhancer.enhance(2.0)
     enhancer_sharp = ImageEnhance.Sharpness(img)
     img = enhancer_sharp.enhance(1.5)
-    
     return img
 
 def ocr_isleme(image):
     """İşlenmiş görüntüden metin okur."""
     processed_image = resim_on_isleme(image)
     try:
-        # Türkçe dil desteği ile oku
         text = pytesseract.image_to_string(processed_image, lang='tur')
         return text, processed_image
     except:
-        # Hata olursa veya dil paketi yoksa varsayılanı dene
         text = pytesseract.image_to_string(processed_image)
         return text, processed_image
 
@@ -85,6 +69,7 @@ def veritabanina_kaydet(metin, vektor):
         st.error(f"Kayıt Hatası: {e}")
         return False
 
+# --- 4. DÜZELTİLEN FONKSİYON (HATAYI ÇÖZEN KISIM) ---
 def arama_yap(sorgu):
     if not supabase:
         return []
@@ -95,23 +80,31 @@ def arama_yap(sorgu):
     if not db_verileri:
         return []
 
-    sorgu_vektoru = model.encode(sorgu, convert_to_tensor=True)
+    # DÜZELTME: convert_to_tensor=False yaptık.
+    # Artık bu da bir Numpy Array oldu, veritabanı verisiyle uyumlu.
+    sorgu_vektoru = model.encode(sorgu, convert_to_tensor=False)
+    
     sonuclar = []
 
     for satir in db_verileri:
-        db_vektor = np.array(json.loads(satir['vektor']))
-        skor = util.cos_sim(sorgu_vektoru, db_vektor).item()
-        
-        # Skor %35'in üzerindeyse göster (Gürültüyü engelle)
-        if skor > 0.35:
-            sonuclar.append({'metin': satir['metin'], 'skor': skor, 'tarih': satir.get('created_at', '')})
+        try:
+            # Veritabanından gelen veri (Numpy Array)
+            db_vektor = np.array(json.loads(satir['vektor']))
+            
+            # İkisi de Numpy Array olduğu için artık hata vermez
+            skor = util.cos_sim(sorgu_vektoru, db_vektor).item()
+            
+            if skor > 0.35:
+                sonuclar.append({'metin': satir['metin'], 'skor': skor, 'tarih': satir.get('created_at', '')})
+        except Exception as e:
+            continue # Hatalı bir kayıt varsa atla, programı çökertme
 
     return sorted(sonuclar, key=lambda x: x['skor'], reverse=True)
 
-# --- 4. ARAYÜZ (FRONTEND) ---
+# --- 5. ARAYÜZ ---
 
 st.title("⚖️ Yargıtay AI & OCR Sistemi")
-st.markdown("**Gelişmiş Görüntü İşleme Modülü Devrede:** Karmaşık arka planlı kararları okuyabilir.")
+st.markdown("**Gelişmiş Görüntü İşleme Modülü Devrede**")
 
 tab1, tab2 = st.tabs(["📤 Karar Yükle", "🔍 Arşivde Ara"])
 
@@ -128,53 +121,48 @@ with tab1:
         
         if st.button("Analiz Et ve Kaydet", type="primary"):
             with st.status("Görüntü işleniyor...", expanded=True) as status:
-                
-                # 1. OCR İşlemi
-                st.write("🖼️ Görüntü temizleniyor ve kontrast ayarlanıyor...")
+                st.write("🖼️ Görüntü temizleniyor...")
                 okunan_metin, islenmis_resim = ocr_isleme(original_image)
                 
-                # İşlenmiş resmi kullanıcıya gösterelim (Kanıt)
                 with col2:
-                    st.image(islenmis_resim, caption="Bilgisayarın Gördüğü (İşlenmiş)", width=300)
+                    st.image(islenmis_resim, caption="Bilgisayarın Gördüğü", width=300)
 
-                # 2. Sonuç Kontrolü
                 if len(okunan_metin.strip()) > 20:
-                    st.write("📝 Metin başarıyla okundu.")
-                    st.code(okunan_metin) # Okunan metni göster
+                    st.write("📝 Metin okundu.")
+                    st.code(okunan_metin)
                     
-                    # 3. Vektör ve Kayıt
-                    st.write("🧠 Yapay zeka anlamlandırıyor...")
-                    vektor = model.encode(okunan_metin)
+                    st.write("🧠 Yapay zeka işliyor...")
+                    # Kayıtta Numpy kullanmaya devam ediyoruz
+                    vektor = model.encode(okunan_metin, convert_to_tensor=False)
                     
-                    st.write("☁️ Buluta kaydediliyor...")
+                    st.write("☁️ Kaydediliyor...")
                     basari = veritabanina_kaydet(okunan_metin, vektor)
                     
                     if basari:
-                        status.update(label="İşlem Başarıyla Tamamlandı!", state="complete", expanded=False)
-                        st.success("✅ Karar veritabanına güvenle eklendi.")
+                        status.update(label="Başarılı!", state="complete", expanded=False)
+                        st.success("✅ Kaydedildi.")
                     else:
-                        status.update(label="Veritabanı Hatası", state="error")
+                        status.update(label="Hata", state="error")
                 else:
-                    status.update(label="Okuma Başarısız", state="error")
-                    st.error("⚠️ Resimden anlamlı bir yazı çıkarılamadı.")
-                    st.warning("İpucu: 'Bilgisayarın Gördüğü' resim simsiyah veya bembeyaz ise kontrast ayarı gerekebilir.")
+                    status.update(label="Okunamadı", state="error")
+                    st.error("⚠️ Yazı okunamadı.")
 
 with tab2:
-    st.header("Akıllı Arama Motoru")
-    arama_metni = st.text_input("Hukuki konu, kanun maddesi veya anahtar kelime:")
+    st.header("Akıllı Arama")
+    arama_metni = st.text_input("Arama terimi girin:")
     
     if st.button("Araştır"):
         if not arama_metni:
-            st.warning("Lütfen bir arama terimi girin.")
+            st.warning("Bir şeyler yazın.")
         else:
-            with st.spinner("Veritabanı taranıyor..."):
+            with st.spinner("Taranıyor..."):
                 sonuclar = arama_yap(arama_metni)
                 
                 if sonuclar:
-                    st.success(f"🎯 {len(sonuclar)} adet ilgili karar bulundu.")
+                    st.success(f"🎯 {len(sonuclar)} sonuç bulundu.")
                     for i, res in enumerate(sonuclar):
                         st.markdown("---")
-                        st.subheader(f"{i+1}. Sonuç (Uygunluk: %{int(res['skor']*100)})")
+                        st.subheader(f"{i+1}. Skor: %{int(res['skor']*100)}")
                         st.info(res['metin'])
                 else:
-                    st.warning("😔 Aradığınız kritere uygun karar bulunamadı.")
+                    st.warning("Sonuç yok.")
