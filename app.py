@@ -16,59 +16,50 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. GÜVENLİK VE GİRİŞ (RENK HATASI DÜZELTİLDİ) ---
+# --- 2. GÜVENLİK VE GİRİŞ ---
 if 'giris_yapildi' not in st.session_state:
     st.session_state['giris_yapildi'] = False
 
 if not st.session_state['giris_yapildi']:
-    # CSS: Yazı rengini #000000 (Siyah) olarak zorluyoruz (!important)
     st.markdown("""
     <style>
-    .login-container {
+    .login-box {
         padding: 40px;
-        border-radius: 12px;
-        background-color: #ffffff;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        border-radius: 10px;
+        background-color: white;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.1);
         text-align: center;
         margin-top: 50px;
-        border-top: 6px solid #d32f2f;
+        border-top: 5px solid #d32f2f;
     }
-    .login-container h1, .login-container h3, .login-container p {
-        color: #000000 !important;
-        font-family: sans-serif;
-    }
+    .login-box h1, .login-box h3, .login-box p { color: #000 !important; }
     </style>
     """, unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
         st.markdown("""
-<div class='login-container'>
-    <h1 style='font-size: 3rem; margin-bottom:0;'>⚖️</h1>
-    <h3 style='font-weight: 600; margin-top: 10px;'>İçtihat Ekleme ve Arama</h3>
-    <p>Yetkili Girişi</p>
-</div>
-""", unsafe_allow_html=True)
+        <div class="login-box">
+            <h1 style="margin:0;">⚖️</h1>
+            <h3 style="margin-top:10px;">İçtihat Ekleme ve Arama</h3>
+            <p>Yetkili Girişi</p>
+        </div>
+        """, unsafe_allow_html=True)
         st.write("")
         
-        with st.form("giris_formu"):
-            sifre = st.text_input("Erişim Şifresi", type="password")
-            submit_btn = st.form_submit_button("Giriş Yap", type="primary", use_container_width=True)
-            
-            if submit_btn:
-                gercek_sifre = "1234"
-                try:
-                    if "APP_PASSWORD" in st.secrets:
-                        gercek_sifre = st.secrets["APP_PASSWORD"]
+        with st.form("login_form"):
+            pw = st.text_input("Şifre", type="password")
+            if st.form_submit_button("Giriş", type="primary", use_container_width=True):
+                real_pw = "1234"
+                try: 
+                    if "APP_PASSWORD" in st.secrets: real_pw = st.secrets["APP_PASSWORD"]
                 except: pass
-
-                if sifre == gercek_sifre:
+                
+                if pw == real_pw:
                     st.session_state['giris_yapildi'] = True
-                    st.success("Giriş Başarılı!")
-                    time.sleep(0.5)
                     st.rerun()
                 else:
-                    st.error("Hatalı Şifre!")
+                    st.error("Hatalı Şifre")
     st.stop()
 
 # ====================================================
@@ -85,15 +76,16 @@ st.markdown("""
     border-left: 5px solid #d32f2f;
     box-shadow: 0 2px 5px rgba(0,0,0,0.1);
     margin-bottom: 15px;
-    color: #333333; /* Metin rengi siyah */
+    color: #333 !important;
 }
 .badge {
-    padding: 5px 10px;
+    padding: 4px 8px;
     border-radius: 4px;
     color: white;
     font-weight: bold;
     font-size: 0.85em;
     display: inline-block;
+    margin-right: 10px;
 }
 .bg-green { background-color: #2e7d32; }
 .bg-yellow { background-color: #f9a825; color: black !important; }
@@ -105,12 +97,12 @@ st.markdown("""
     border-radius: 4px;
     font-size: 0.8em;
     font-weight: bold;
-    margin-left: 10px;
 }
 .card-text {
     margin-top: 10px;
-    line-height: 1.6;
+    line-height: 1.5;
     font-size: 1rem;
+    white-space: pre-wrap; /* Satır atlamaları korur */
 }
 </style>
 """, unsafe_allow_html=True)
@@ -223,15 +215,13 @@ def arama_yap_gorsel(sorgu, esik):
 # YAN MENÜ
 with st.sidebar:
     st.header("⚙️ Yönetim Paneli")
-    
     if supabase:
         try:
             c = supabase.table("kararlar").select("id", count="exact").execute().count
             st.info(f"📚 Arşivde **{c}** karar var.")
         except: st.error("Bağlantı Yok")
     
-    st.markdown("---")
-    st.write("🔧 Araçlar")
+    st.divider()
     if st.button("🧹 Kopyaları Sil", use_container_width=True):
         n = akilli_temizlik()
         if n: st.success(f"{n} silindi"); time.sleep(1); st.rerun()
@@ -240,16 +230,15 @@ with st.sidebar:
     with st.expander("🚨 Kırmızı Alan"):
         if st.button("Her Şeyi SİL", type="primary", use_container_width=True):
             veritabani_sifirla()
-            st.warning("Sıfırlandı")
-            time.sleep(1); st.rerun()
+            st.warning("Sıfırlandı"); time.sleep(1); st.rerun()
 
-    st.markdown("<br>" * 5, unsafe_allow_html=True) 
-    st.markdown("---")
+    st.markdown("<br>"*5, unsafe_allow_html=True)
+    st.divider()
     if st.button("🚪 Güvenli Çıkış", type="secondary", use_container_width=True):
         st.session_state['giris_yapildi'] = False
         st.rerun()
 
-# ANA BAŞLIK (HTML SOLA YASLANDI - HATA DÜZELTME)
+# ANA BAŞLIK
 st.markdown("""
 <div style="background-color:#d32f2f;padding:20px;border-radius:10px;margin-bottom:25px;">
 <h1 style="color:white;text-align:center;margin:0;">İçtihat Ekleme ve Arama Platformu</h1>
@@ -261,7 +250,7 @@ tab1, tab2 = st.tabs(["📤 **Karar Yükleme Merkezi**", "🔍 **Akıllı Arama 
 
 with tab1:
     st.markdown("### 📄 Dosya Yükleme")
-    st.caption("Yargıtay kararlarını yükleyin. Sistem otomatik işler.")
+    st.caption("Yargıtay kararlarını yükleyin.")
     files = st.file_uploader("", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
     
     if files:
@@ -279,41 +268,30 @@ with tab1:
                             if veritabanina_kaydet(txt, v): basarili += 1
                 except: pass
                 bar.progress((i+1)/len(files))
-            st.balloons()
-            st.success(f"Tamamlandı: {basarili} Eklendi, {mukerrer} Mükerrer.")
+            st.success(f"Bitti: {basarili} Eklendi, {mukerrer} Mükerrer.")
 
 with tab2:
-    col_s, col_f = st.columns([3, 1])
-    with col_s: q = st.text_input("Arama Kelimesi", placeholder="Örn: kıdem tazminatı...", label_visibility="collapsed")
-    with col_f: sens = st.slider("Hassasiyet Ayarı", 0.0, 1.0, 0.25)
+    c_s, c_f = st.columns([3, 1])
+    with c_s: q = st.text_input("Arama Kelimesi", placeholder="Örn: kıdem tazminatı...", label_visibility="collapsed")
+    with c_f: sens = st.slider("Hassasiyet", 0.0, 1.0, 0.25)
 
     if st.button("🔎 İçtihatlarda Ara", type="primary", use_container_width=True):
         if q:
-            with st.spinner("Arşiv taranıyor..."):
+            with st.spinner("Aranıyor..."):
                 res = arama_yap_gorsel(q, sens)
                 if res:
-                    st.markdown(f"### 🎯 {len(res)} Sonuç Bulundu")
+                    st.markdown(f"### 🎯 {len(res)} Sonuç")
                     for r in res:
                         p = int(r['skor']*100)
+                        if p >= 80: bg="bg-green"; lbl="Yüksek"
+                        elif p >= 50: bg="bg-yellow"; lbl="Orta"
+                        else: bg="bg-red"; lbl="Düşük"
                         
-                        if p >= 80: bg_class = "bg-green"; label = "Yüksek"
-                        elif p >= 50: bg_class = "bg-yellow"; label = "Orta"
-                        else: bg_class = "bg-red"; label = "Düşük"
+                        bonus = '<span class="bonus-tag">✅ Kelime Var</span>' if r['bonus']>0 else ''
+                        tm = html.escape(r['metin'])
                         
-                        bonus_html = '<span class="bonus-tag">✅ Kelime Var</span>' if r['bonus'] > 0 else ''
-                        temiz_metin = html.escape(r['metin'])
-                        
-                        # --- KRİTİK DÜZELTME: HTML KODUNU SOLA YASLADIK ---
-                        # Bu sayede Streamlit bunu "kod bloğu" sanıp olduğu gibi ekrana basmayacak.
-                        html_code = f"""
-<div class="decision-card">
-    <div style="margin-bottom:10px; display:flex; align-items:center;">
-        <span class="badge {bg_class}">%{p} - {label}</span>
-        {bonus_html}
-    </div>
-    <div class="card-text">{temiz_metin}</div>
-</div>
-"""
-                        st.markdown(html_code, unsafe_allow_html=True)
-                else: st.warning("Sonuç bulunamadı.")
-        else: st.warning("Lütfen arama kelimesi girin.")
+                        # --- HTML DÜZELTİLDİ: TEK SATIR HALİNE GETİRİLDİ ---
+                        # Girinti olmadan dümdüz yazıldı.
+                        st.markdown(f"""<div class="decision-card"><div style="margin-bottom:10px;"><span class="badge {bg}">%{p} - {lbl}</span>{bonus}</div><div class="card-text">{tm}</div></div>""", unsafe_allow_html=True)
+                else: st.warning("Sonuç yok.")
+        else: st.warning("Kelime girin.")
