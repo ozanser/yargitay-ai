@@ -218,8 +218,8 @@ with st.sidebar:
             st.warning("Sıfırlandı")
             time.sleep(1); st.rerun()
 
-    # ÇIKIŞ BUTONU EN ALTA ALINDI
-    st.markdown("<br>" * 5, unsafe_allow_html=True) # Biraz boşluk bırak
+    # ÇIKIŞ BUTONU EN ALTA ALINDI VE BOŞLUK EKLENDİ
+    st.markdown("<br>" * 5, unsafe_allow_html=True) 
     st.markdown("---")
     if st.button("🚪 Güvenli Çıkış", type="secondary", use_container_width=True):
         st.session_state['giris_yapildi'] = False
