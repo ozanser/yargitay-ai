@@ -15,8 +15,8 @@ try:
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 except:
     # Local test
-    SUPABASE_URL = "SENIN_URL"
-    SUPABASE_KEY = "SENIN_KEY"
+    SUPABASE_URL = "URL_YOKSA_BURAYA_YAZ"
+    SUPABASE_KEY = "KEY_YOKSA_BURAYA_YAZ"
 
 @st.cache_resource
 def init_supabase():
@@ -33,7 +33,7 @@ def model_yukle():
 
 model = model_yukle()
 
-# --- 3. YARDIMCI FONKSİYONLAR ---
+# --- 3. FONKSİYONLAR ---
 
 def resim_on_isleme(image):
     img = image.convert('L')
@@ -53,57 +53,79 @@ def ocr_isleme(image):
         return text, processed_image
 
 def mukerrer_kontrol(yeni_vektor):
-    """
-    Veritabanındaki tüm kararları kontrol eder.
-    Eğer %90 üzeri benzerlik bulursa True (Var) döner.
-    """
+    """Yeni yüklenen karar veritabanında var mı diye bakar."""
+    if not supabase: return False, None
     response = supabase.table("kararlar").select("*").execute()
     db_verileri = response.data
     
-    if not db_verileri:
-        return False, None
+    if not db_verileri: return False, None
 
-    # Yeni vektörü tensör yapma, numpy kalsın
     yeni_vektor_np = yeni_vektor
 
     for satir in db_verileri:
         try:
             db_vektor = np.array(json.loads(satir['vektor']))
             skor = util.cos_sim(yeni_vektor_np, db_vektor).item()
-            
-            # %90 Benzerlik Eşiği (OCR hatalarını tolere etmek için %95 yerine %90 iyidir)
-            if skor > 0.90:
-                return True, satir # Mükerrer bulundu, bulunan kaydı döndür
-        except:
-            continue
-            
+            if skor > 0.90: # %90 Benzerlik Eşiği
+                return True, satir 
+        except: continue  
     return False, None
 
+# --- YENİ EKLENEN OTOMATİK TEMİZLİK FONKSİYONU ---
+def veritabani_temizle():
+    """Veritabanındaki aynı içeriğe sahip kopyaları siler."""
+    if not supabase: return 0
+    
+    # 1. Tüm verileri 'Oluşturulma Tarihine' göre çek (Eskiler kalsın, yeniler silinsin)
+    response = supabase.table("kararlar").select("id, metin, created_at").order("created_at").execute()
+    veriler = response.data
+
+    if not veriler: return 0
+
+    gordum_kumesi = set()
+    silinecek_idler = []
+
+    for satir in veriler:
+        # Metnin tamamını imza olarak kullan (Boşlukları temizle)
+        metin_imzasi = satir['metin'].strip()
+
+        if metin_imzasi in gordum_kumesi:
+            # Bu metni daha önce gördük, demek ki bu bir kopya -> ID'yi not et
+            silinecek_idler.append(satir['id'])
+        else:
+            # İlk kez görüyoruz -> Kaydet
+            gordum_kumesi.add(metin_imzasi)
+
+    # 2. Toplu Silme İşlemi
+    if silinecek_idler:
+        try:
+            # Supabase'de "in_" komutu ile listedeki tüm ID'leri siler
+            supabase.table("kararlar").delete().in_("id", silinecek_idler).execute()
+            return len(silinecek_idler)
+        except Exception as e:
+            st.error(f"Silme hatası: {e}")
+            return 0
+    else:
+        return 0
+
 def veritabanina_kaydet(metin, vektor):
-    if not supabase:
-        st.error("Veritabanı bağlantısı yok!")
-        return False
-        
+    if not supabase: return False
     vektor_json = json.dumps(vektor.tolist())
     data = {"metin": metin, "vektor": vektor_json}
-    
     try:
         supabase.table("kararlar").insert(data).execute()
         return True
-    except Exception as e:
-        st.error(f"Kayıt Hatası: {e}")
-        return False
+    except: return False
 
 def arama_yap(sorgu):
     if not supabase: return []
     response = supabase.table("kararlar").select("*").execute()
-    db_verileri = response.data
-    if not db_verileri: return []
+    if not response.data: return []
 
     sorgu_vektoru = model.encode(sorgu, convert_to_tensor=False)
     sonuclar = []
 
-    for satir in db_verileri:
+    for satir in response.data:
         try:
             db_vektor = np.array(json.loads(satir['vektor']))
             skor = util.cos_sim(sorgu_vektoru, db_vektor).item()
@@ -117,15 +139,30 @@ def arama_yap(sorgu):
 
 st.title("⚖️ Yargıtay AI & OCR Sistemi")
 
-# --- YENİ ÖZELLİK: YAN MENÜ ---
+# --- GÜNCELLENEN YAN MENÜ ---
 with st.sidebar:
     st.header("⚙️ Yönetim Paneli")
-    st.info("Veritabanı durumunu buradan kontrol edebilirsiniz.")
     
-    if st.button("🧹 Mükerrer Kayıtları Temizle"):
-        # Basit bir temizlik mantığı: Aynı metne sahip olanları siler
-        st.warning("Bu işlem henüz otomatikleştirilmedi. Şu an için manuel kontrol önerilir.")
-        # İleride buraya otomatik silme kodu ekleyebiliriz.
+    # Veritabanı durumunu göster
+    if supabase:
+        try:
+            toplam_kayit = supabase.table("kararlar").select("id", count="exact").execute().count
+            st.metric("Toplam Karar Sayısı", toplam_kayit)
+        except:
+            st.metric("Durum", "Bağlantı Yok")
+
+    st.markdown("---")
+    st.write("Veritabanı Bakımı")
+    
+    if st.button("🧹 Mükerrerleri Temizle", type="primary"):
+        with st.spinner("Veritabanı taranıyor ve temizleniyor..."):
+            silinen_sayisi = veritabani_temizle()
+            
+            if silinen_sayisi > 0:
+                st.success(f"Toplam {silinen_sayisi} adet kopya kayıt silindi!")
+                st.balloons() # Kutlama efekti :)
+            else:
+                st.info("Veritabanı tertemiz! Kopya kayıt bulunamadı.")
 
 tab1, tab2 = st.tabs(["📤 Karar Yükle", "🔍 Arşivde Ara"])
 
@@ -141,31 +178,25 @@ with tab1:
         
         if st.button("Analiz Et ve Kaydet", type="primary"):
             with st.status("İşlemler yapılıyor...", expanded=True) as status:
-                
-                # 1. OCR
                 st.write("🖼️ Görüntü işleniyor...")
                 okunan_metin, islenmis_resim = ocr_isleme(original_image)
                 with col2:
                     st.image(islenmis_resim, caption="İşlenmiş", width=300)
 
                 if len(okunan_metin.strip()) > 20:
-                    st.write("📝 Metin Vektörleştiriliyor...")
-                    vektor = model.encode(okunan_metin, convert_to_tensor=False)
-                    
-                    # 2. MÜKERRER KONTROLÜ (YENİ)
                     st.write("🔍 Benzerlik kontrolü yapılıyor...")
+                    vektor = model.encode(okunan_metin, convert_to_tensor=False)
                     var_mi, eski_kayit = mukerrer_kontrol(vektor)
                     
                     if var_mi:
-                        status.update(label="Kayıt Başarısız: Mükerrer!", state="error", expanded=True)
-                        st.error("⛔ Bu karar zaten sistemde kayıtlı!")
-                        st.warning(f"Sistemdeki benzer kayıt: \n\n {eski_kayit['metin'][:100]}...")
+                        status.update(label="Mükerrer Kayıt Engellendi", state="error", expanded=True)
+                        st.error("⛔ Bu karar zaten var!")
+                        st.warning(f"Benzer kayıt içeriği: {eski_kayit['metin'][:100]}...")
                     else:
                         st.write("☁️ Kaydediliyor...")
-                        basari = veritabanina_kaydet(okunan_metin, vektor)
-                        if basari:
-                            status.update(label="Kaydedildi", state="complete")
-                            st.success("✅ Karar başarıyla eklendi.")
+                        if veritabanina_kaydet(okunan_metin, vektor):
+                            status.update(label="Başarılı!", state="complete")
+                            st.success("✅ Kaydedildi.")
                 else:
                     status.update(label="Okunamadı", state="error")
                     st.error("⚠️ Yazı okunamadı.")
@@ -184,6 +215,7 @@ with tab2:
                     for i, res in enumerate(sonuclar):
                         st.markdown("---")
                         st.subheader(f"{i+1}. Skor: %{int(res['skor']*100)}")
+                        st.caption(f"Tarih: {res['tarih'][:10]}")
                         st.info(res['metin'])
                 else:
                     st.warning("Sonuç yok.")
