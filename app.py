@@ -15,33 +15,38 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. GÜVENLİK VE GİRİŞ (İSİM DÜZELTİLDİ) ---
+# --- 2. GÜVENLİK VE GİRİŞ ---
 if 'giris_yapildi' not in st.session_state:
     st.session_state['giris_yapildi'] = False
 
 if not st.session_state['giris_yapildi']:
+    # TASARIM DÜZELTME: color: #333 eklendi (Yazıları siyah yapar)
     st.markdown("""
     <style>
     .login-container {
         padding: 40px;
         border-radius: 12px;
         background-color: #ffffff;
+        color: #333333; /* YAZI RENGİ SİYAH OLARAK ZORLANDI */
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         text-align: center;
         margin-top: 50px;
         border-top: 6px solid #d32f2f;
+    }
+    /* Kutunun içindeki başlıkları da siyah yap */
+    .login-container h1, .login-container h3 {
+        color: #333333 !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        # İSİM GÜNCELLENDİ
+        # "Yetkili Personel Girişi" yazısı kaldırıldı
         st.markdown("""
         <div class='login-container'>
-            <h1 style='font-size: 3rem;'>⚖️</h1>
-            <h3>Yargıtay İçtihat Ekleme ve Arama</h3>
-            <p style='color:gray; font-size:0.9em;'>Yetkili Personel Girişi</p>
+            <h1 style='font-size: 3rem; margin-bottom: 0;'>⚖️</h1>
+            <h3 style='font-weight: 600; margin-top: 10px;'>Yargıtay İçtihat Ekleme ve Arama</h3>
         </div>
         """, unsafe_allow_html=True)
         st.write("")
