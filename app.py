@@ -6,32 +6,36 @@ from sentence_transformers import SentenceTransformer, util
 from supabase import create_client
 import json
 import time
-import html # Metin temizliği için gerekli kütüphane
+import html
 
 # --- 1. AYARLAR ---
 st.set_page_config(
-    page_title="İçtihat Ekleme ve Arama", 
+    page_title="İçtihat Platformu", 
     layout="wide", 
     page_icon="⚖️",
     initial_sidebar_state="expanded"
 )
 
-# --- 2. GÜVENLİK VE GİRİŞ ---
+# --- 2. GÜVENLİK VE GİRİŞ (RENK HATASI DÜZELTİLDİ) ---
 if 'giris_yapildi' not in st.session_state:
     st.session_state['giris_yapildi'] = False
 
 if not st.session_state['giris_yapildi']:
+    # CSS: Yazı rengini #000000 (Siyah) olarak zorluyoruz (!important)
     st.markdown("""
     <style>
     .login-container {
         padding: 40px;
         border-radius: 12px;
         background-color: #ffffff;
-        color: #333;
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         text-align: center;
         margin-top: 50px;
         border-top: 6px solid #d32f2f;
+    }
+    .login-container h1, .login-container h3, .login-container p {
+        color: #000000 !important;
+        font-family: sans-serif;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -39,16 +43,17 @@ if not st.session_state['giris_yapildi']:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("""
-        <div class='login-container'>
-            <h1 style='color:#333; margin:0;'>⚖️</h1>
-            <h3 style='color:#333; margin-top:10px;'>İçtihat Ekleme ve Arama</h3>
-        </div>
-        """, unsafe_allow_html=True)
+<div class='login-container'>
+    <h1 style='font-size: 3rem; margin-bottom:0;'>⚖️</h1>
+    <h3 style='font-weight: 600; margin-top: 10px;'>İçtihat Ekleme ve Arama</h3>
+    <p>Yetkili Girişi</p>
+</div>
+""", unsafe_allow_html=True)
         st.write("")
         
         with st.form("giris_formu"):
             sifre = st.text_input("Erişim Şifresi", type="password")
-            submit_btn = st.form_submit_button("Sisteme Giriş Yap", type="primary", use_container_width=True)
+            submit_btn = st.form_submit_button("Giriş Yap", type="primary", use_container_width=True)
             
             if submit_btn:
                 gercek_sifre = "1234"
@@ -73,38 +78,39 @@ if not st.session_state['giris_yapildi']:
 # --- 3. TASARIM (CSS) ---
 st.markdown("""
 <style>
-/* Kart Tasarımı */
 .decision-card {
-    background-color: #ffffff;
-    padding: 20px;
+    background-color: white;
+    padding: 15px;
     border-radius: 8px;
-    border-left: 6px solid #d32f2f;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    margin-bottom: 20px;
-    color: #333333;
+    border-left: 5px solid #d32f2f;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    margin-bottom: 15px;
+    color: #333333; /* Metin rengi siyah */
 }
-/* Rozetler */
 .badge {
     padding: 5px 10px;
-    border-radius: 6px;
-    font-weight: 600;
-    font-size: 0.85rem;
+    border-radius: 4px;
+    color: white;
+    font-weight: bold;
+    font-size: 0.85em;
     display: inline-block;
 }
-.badge-high { background-color: #2e7d32; color: white; }
-.badge-med { background-color: #f9a825; color: black; }
-.badge-low { background-color: #c62828; color: white; }
-
-/* Bonus Etiketi */
+.bg-green { background-color: #2e7d32; }
+.bg-yellow { background-color: #f9a825; color: black !important; }
+.bg-red { background-color: #c62828; }
 .bonus-tag {
     background-color: #e3f2fd;
-    color: #0d47a1;
-    padding: 4px 8px;
+    color: #1565c0;
+    padding: 3px 8px;
     border-radius: 4px;
-    font-size: 0.8rem;
+    font-size: 0.8em;
     font-weight: bold;
     margin-left: 10px;
-    border: 1px solid #bbdefb;
+}
+.card-text {
+    margin-top: 10px;
+    line-height: 1.6;
+    font-size: 1rem;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -243,11 +249,11 @@ with st.sidebar:
         st.session_state['giris_yapildi'] = False
         st.rerun()
 
-# ANA BAŞLIK
+# ANA BAŞLIK (HTML SOLA YASLANDI - HATA DÜZELTME)
 st.markdown("""
 <div style="background-color:#d32f2f;padding:20px;border-radius:10px;margin-bottom:25px;">
-    <h1 style="color:white;text-align:center;margin:0;">İçtihat Ekleme ve Arama Platformu</h1>
-    <p style="color:#ffcdd2;text-align:center;margin-top:5px;">Yargıtay Kararları Yapay Zeka Arşivi</p>
+<h1 style="color:white;text-align:center;margin:0;">İçtihat Ekleme ve Arama Platformu</h1>
+<p style="color:#ffcdd2;text-align:center;margin-top:5px;">Yargıtay Kararları Yapay Zeka Arşivi</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -279,7 +285,7 @@ with tab1:
 with tab2:
     col_s, col_f = st.columns([3, 1])
     with col_s: q = st.text_input("Arama Kelimesi", placeholder="Örn: kıdem tazminatı...", label_visibility="collapsed")
-    with col_f: sens = st.slider("Hassasiyet", 0.0, 1.0, 0.25)
+    with col_f: sens = st.slider("Hassasiyet Ayarı", 0.0, 1.0, 0.25)
 
     if st.button("🔎 İçtihatlarda Ara", type="primary", use_container_width=True):
         if q:
@@ -290,25 +296,24 @@ with tab2:
                     for r in res:
                         p = int(r['skor']*100)
                         
-                        # Stil belirleme
-                        if p >= 80: badge = "badge-high"; label = "Yüksek"
-                        elif p >= 50: badge = "badge-med"; label = "Orta"
-                        else: badge = "badge-low"; label = "Düşük"
+                        if p >= 80: bg_class = "bg-green"; label = "Yüksek"
+                        elif p >= 50: bg_class = "bg-yellow"; label = "Orta"
+                        else: bg_class = "bg-red"; label = "Düşük"
                         
                         bonus_html = '<span class="bonus-tag">✅ Kelime Var</span>' if r['bonus'] > 0 else ''
-                        
-                        # --- KRİTİK DÜZELTME: html.escape ---
-                        # Metni HTML için güvenli hale getiriyoruz.
                         temiz_metin = html.escape(r['metin'])
                         
-                        st.markdown(f"""
-                        <div class="decision-card">
-                            <div style="margin-bottom:10px; display:flex; align-items:center;">
-                                <span class="badge {badge}">%{p} - {label}</span>
-                                {bonus_html}
-                            </div>
-                            <div style="line-height:1.5;">{temiz_metin}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        # --- KRİTİK DÜZELTME: HTML KODUNU SOLA YASLADIK ---
+                        # Bu sayede Streamlit bunu "kod bloğu" sanıp olduğu gibi ekrana basmayacak.
+                        html_code = f"""
+<div class="decision-card">
+    <div style="margin-bottom:10px; display:flex; align-items:center;">
+        <span class="badge {bg_class}">%{p} - {label}</span>
+        {bonus_html}
+    </div>
+    <div class="card-text">{temiz_metin}</div>
+</div>
+"""
+                        st.markdown(html_code, unsafe_allow_html=True)
                 else: st.warning("Sonuç bulunamadı.")
         else: st.warning("Lütfen arama kelimesi girin.")
