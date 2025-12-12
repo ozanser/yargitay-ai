@@ -7,44 +7,50 @@ from supabase import create_client
 import json
 import time
 
-# --- 1. AYARLAR (EN BAŞTA OLMALI) ---
+# --- 1. AYARLAR ---
 st.set_page_config(
-    page_title="Yargıtay AI", 
+    page_title="İçtihat Ekleme ve Arama", 
     layout="wide", 
     page_icon="⚖️",
     initial_sidebar_state="expanded"
 )
 
-# --- 2. GÜVENLİK VE GİRİŞ (FORM YAPISI) ---
+# --- 2. GÜVENLİK VE GİRİŞ (İSİM DÜZELTİLDİ) ---
 if 'giris_yapildi' not in st.session_state:
     st.session_state['giris_yapildi'] = False
 
 if not st.session_state['giris_yapildi']:
-    # Şık ve Basit CSS
     st.markdown("""
     <style>
     .login-container {
-        padding: 50px;
-        border-radius: 10px;
-        background-color: #f0f2f6;
+        padding: 40px;
+        border-radius: 12px;
+        background-color: #ffffff;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         text-align: center;
         margin-top: 50px;
+        border-top: 6px solid #d32f2f;
     }
     </style>
     """, unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("<div class='login-container'><h2>⚖️ Yargıtay Sistemi</h2></div>", unsafe_allow_html=True)
+        # İSİM GÜNCELLENDİ
+        st.markdown("""
+        <div class='login-container'>
+            <h1 style='font-size: 3rem;'>⚖️</h1>
+            <h3>Yargıtay İçtihat Ekleme ve Arama</h3>
+            <p style='color:gray; font-size:0.9em;'>Yetkili Personel Girişi</p>
+        </div>
+        """, unsafe_allow_html=True)
         st.write("")
         
-        # FORM YAPISI: Enter tuşu ile giriş sağlar
         with st.form("giris_formu"):
             sifre = st.text_input("Erişim Şifresi", type="password")
-            submit_btn = st.form_submit_button("Giriş Yap", type="primary")
+            submit_btn = st.form_submit_button("Sisteme Giriş Yap", type="primary", use_container_width=True)
             
             if submit_btn:
-                # Şifre Kontrolü
                 gercek_sifre = "1234"
                 try:
                     if "APP_PASSWORD" in st.secrets:
@@ -58,15 +64,13 @@ if not st.session_state['giris_yapildi']:
                     st.rerun()
                 else:
                     st.error("Hatalı Şifre!")
-    
-    # Giriş yapılmadıysa kod burada biter, aşağı inmez.
     st.stop()
 
 # ====================================================
-# SADECE GİRİŞ YAPANLAR İÇİN UYGULAMA
+# İÇERİK (GİRİŞ YAPANLAR İÇİN)
 # ====================================================
 
-# --- 3. TASARIM (CARD STYLE) ---
+# --- 3. TASARIM (CSS) ---
 st.markdown("""
 <style>
 .decision-card {
@@ -89,7 +93,6 @@ try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 except:
-    # Hata almamak için boş değerler
     SUPABASE_URL = ""
     SUPABASE_KEY = ""
 
@@ -188,74 +191,94 @@ def arama_yap_gorsel(sorgu, esik):
         except: continue
     return sorted(sonuclar, key=lambda x: x['skor'], reverse=True)
 
-# --- 6. ARAYÜZ (GİRİŞ SONRASI) ---
+# --- 6. ARAYÜZ ---
 
+# YAN MENÜ TASARIMI
 with st.sidebar:
-    st.title("⚙️ Yönetim")
+    st.header("⚙️ Yönetim Paneli")
+    
     if supabase:
         try:
             c = supabase.table("kararlar").select("id", count="exact").execute().count
-            st.info(f"Kayıtlı Karar: **{c}**")
+            st.info(f"📚 Arşivde **{c}** karar var.")
         except: st.error("Bağlantı Yok")
     
-    st.divider()
-    if st.button("🧹 Kopyaları Sil"):
+    st.markdown("---")
+    
+    # Yönetim Araçları
+    st.write("🔧 Araçlar")
+    if st.button("🧹 Kopyaları Sil", use_container_width=True):
         n = akilli_temizlik()
         if n: st.success(f"{n} silindi"); time.sleep(1); st.rerun()
         else: st.info("Temiz")
-    
-    if st.button("🚪 Çıkış Yap"):
-        st.session_state['giris_yapildi'] = False
-        st.rerun()
 
     with st.expander("🚨 Kırmızı Alan"):
-        if st.button("Her Şeyi SİL"):
+        if st.button("Her Şeyi SİL", type="primary", use_container_width=True):
             veritabani_sifirla()
             st.warning("Sıfırlandı")
             time.sleep(1); st.rerun()
 
-st.title("⚖️ Yargıtay Akıllı Arşiv")
+    # ÇIKIŞ BUTONU EN ALTA ALINDI
+    st.markdown("<br>" * 5, unsafe_allow_html=True) # Biraz boşluk bırak
+    st.markdown("---")
+    if st.button("🚪 Güvenli Çıkış", type="secondary", use_container_width=True):
+        st.session_state['giris_yapildi'] = False
+        st.rerun()
 
-tab1, tab2 = st.tabs(["📤 Yükleme", "🔍 Arama"])
+# ANA SAYFA BAŞLIĞI
+st.markdown("""
+<div style="background-color:#d32f2f;padding:20px;border-radius:10px;margin-bottom:25px;">
+    <h1 style="color:white;text-align:center;margin:0;">İçtihat Ekleme ve Arama Platformu</h1>
+    <p style="color:#ffcdd2;text-align:center;margin-top:5px;">Yargıtay Kararları Yapay Zeka Arşivi</p>
+</div>
+""", unsafe_allow_html=True)
+
+tab1, tab2 = st.tabs(["📤 **Karar Yükleme Merkezi**", "🔍 **Akıllı Arama Motoru**"])
 
 with tab1:
-    files = st.file_uploader("Karar Yükle", accept_multiple_files=True)
-    if files and st.button("Analiz Et ve Kaydet", type="primary"):
-        bar = st.progress(0)
-        basarili, mukerrer = 0, 0
-        for i, f in enumerate(files):
-            try:
-                img = Image.open(f)
-                txt = ocr_isleme(img)
-                if len(txt) > 10:
-                    v = model.encode(txt, convert_to_tensor=False).astype(np.float32)
-                    if mukerrer_kontrol(v): mukerrer += 1
-                    else:
-                        if veritabanina_kaydet(txt, v): basarili += 1
-            except: pass
-            bar.progress((i+1)/len(files))
-        st.success(f"Bitti: {basarili} Eklendi, {mukerrer} Atlandı.")
+    st.markdown("### 📄 Dosya Yükleme")
+    st.caption("Yargıtay kararlarının fotoğraflarını buraya sürükleyin. Sistem otomatik okur ve arşivler.")
+    
+    files = st.file_uploader("", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
+    
+    if files:
+        if st.button(f"🚀 {len(files)} Adet Kararı İşle ve Kaydet", type="primary", use_container_width=True):
+            bar = st.progress(0)
+            basarili, mukerrer = 0, 0
+            
+            for i, f in enumerate(files):
+                try:
+                    img = Image.open(f)
+                    txt = ocr_isleme(img)
+                    if len(txt) > 10:
+                        v = model.encode(txt, convert_to_tensor=False).astype(np.float32)
+                        if mukerrer_kontrol(v): mukerrer += 1
+                        else:
+                            if veritabanina_kaydet(txt, v): basarili += 1
+                except: pass
+                bar.progress((i+1)/len(files))
+            
+            st.balloons()
+            st.success(f"İşlem Tamamlandı! ✅ {basarili} Eklendi, ⛔ {mukerrer} Mükerrer.")
 
 with tab2:
     col_s, col_f = st.columns([3, 1])
-    with col_s: q = st.text_input("Arama Kelimesi", placeholder="Örn: eroin ticareti")
-    with col_f: sens = st.slider("Hassasiyet", 0.0, 1.0, 0.25)
+    with col_s: q = st.text_input("Arama Kelimesi", placeholder="Örn: kıdem tazminatı, uyuşturucu ticareti...", label_visibility="collapsed")
+    with col_f: sens = st.slider("Hassasiyet Ayarı", 0.0, 1.0, 0.25)
 
-    if st.button("Ara", type="primary"):
+    if st.button("🔎 İçtihatlarda Ara", type="primary", use_container_width=True):
         if q:
-            with st.spinner("Taranıyor..."):
+            with st.spinner("Arşiv taranıyor..."):
                 res = arama_yap_gorsel(q, sens)
                 if res:
-                    st.success(f"{len(res)} Sonuç")
+                    st.markdown(f"### 🎯 {len(res)} Sonuç Bulundu")
                     for r in res:
                         p = int(r['skor']*100)
-                        
-                        # Renk Seçimi
                         if p >= 80: css_class = "badge-high"; label = "Yüksek"
                         elif p >= 50: css_class = "badge-med"; label = "Orta"
                         else: css_class = "badge-low"; label = "Düşük"
                         
-                        bonus_html = '<span class="bonus-tag">✅ Kelime</span>' if r['bonus'] > 0 else ''
+                        bonus_html = '<span class="bonus-tag">✅ Kelime Var</span>' if r['bonus'] > 0 else ''
                         
                         st.markdown(f"""
                         <div class="decision-card">
@@ -266,5 +289,5 @@ with tab2:
                             <div style="color:#333;">{r['metin']}</div>
                         </div>
                         """, unsafe_allow_html=True)
-                else: st.warning("Sonuç yok")
-        else: st.warning("Yazınız.")
+                else: st.warning("Sonuç bulunamadı.")
+        else: st.warning("Lütfen arama kelimesi girin.")
