@@ -5,7 +5,6 @@ import numpy as np
 from sentence_transformers import SentenceTransformer, util
 from supabase import create_client
 import json
-import time
 
 # --- 1. AYARLAR ---
 st.set_page_config(page_title="Yargıtay AI Asistanı", layout="wide", page_icon="⚖️")
@@ -15,8 +14,8 @@ try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 except:
-    SUPABASE_URL = "URL_BURAYA"
-    SUPABASE_KEY = "KEY_BURAYA"
+    SUPABASE_URL = "URL_YOKSA_BURAYA"
+    SUPABASE_KEY = "KEY_YOKSA_BURAYA"
 
 @st.cache_resource
 def init_supabase():
@@ -56,12 +55,10 @@ def veritabanina_kaydet(metin, vektor):
 
 def mukerrer_kontrol(yeni_vektor):
     if not supabase: return False
-    # Sadece vektörleri çekiyoruz (hız için)
     response = supabase.table("kararlar").select("vektor").execute()
     if not response.data: return False
 
     yeni_vektor_np = yeni_vektor.astype(np.float32)
-
     for satir in response.data:
         try:
             db_vektor = np.array(json.loads(satir['vektor'])).astype(np.float32)
@@ -69,25 +66,6 @@ def mukerrer_kontrol(yeni_vektor):
             if skor > 0.90: return True
         except: continue
     return False
-
-def arama_yap(sorgu):
-    if not supabase: return []
-    try:
-        response = supabase.table("kararlar").select("*").execute()
-        veriler = response.data
-    except: return []
-    if not veriler: return []
-
-    sorgu_vektoru = model.encode(sorgu, convert_to_tensor=False).astype(np.float32)
-    sonuclar = []
-    for satir in veriler:
-        try:
-            db_vektor = np.array(json.loads(satir['vektor'])).astype(np.float32)
-            skor = util.cos_sim(sorgu_vektoru, db_vektor).item()
-            if skor > 0.25:
-                sonuclar.append(satir | {'skor': skor})
-        except: continue
-    return sorted(sonuclar, key=lambda x: x['skor'], reverse=True)
 
 def veritabani_temizle():
     if not supabase: return 0
@@ -103,6 +81,54 @@ def veritabani_temizle():
         supabase.table("kararlar").delete().in_("id", silinecek).execute()
         return len(silinecek)
     return 0
+
+# --- GÜNCELLENEN HİBRİT ARAMA FONKSİYONU ---
+def arama_yap_hibrit(sorgu, esik_degeri):
+    if not supabase: return []
+    try:
+        response = supabase.table("kararlar").select("*").execute()
+        veriler = response.data
+    except: return []
+    if not veriler: return []
+
+    # 1. Vektör Araması (Anlam Araması)
+    sorgu_vektoru = model.encode(sorgu, convert_to_tensor=False).astype(np.float32)
+    
+    sonuclar = []
+    
+    # Küçük harfe çevirip arama yapalım (Büyük/küçük harf duyarlılığını kaldırmak için)
+    sorgu_kucuk = sorgu.lower()
+
+    for satir in veriler:
+        try:
+            # A. Vektör Puanı Hesapla (0.0 - 1.0 arası)
+            db_vektor = np.array(json.loads(satir['vektor'])).astype(np.float32)
+            vektor_skoru = util.cos_sim(sorgu_vektoru, db_vektor).item()
+            
+            # B. Kelime Bonusu (Keyword Boosting)
+            # Eğer aranan kelime metnin içinde birebir geçiyorsa puana +0.3 ekle!
+            metin_kucuk = satir['metin'].lower()
+            bonus_puan = 0.0
+            
+            if sorgu_kucuk in metin_kucuk:
+                bonus_puan = 0.30  # Ciddi bir artış, o kararı tepeye taşır.
+            
+            # C. Toplam Skor
+            # Bonus ile birlikte skor 1.0'ı geçebilir, sorun değil.
+            toplam_skor = vektor_skoru + bonus_puan
+            
+            # D. Eşik Değeri Kontrolü (Kullanıcının seçtiği ayara göre)
+            if toplam_skor >= esik_degeri:
+                sonuclar.append({
+                    'metin': satir['metin'], 
+                    'skor': toplam_skor, 
+                    'vektor_skoru': vektor_skoru, # Saf AI puanı
+                    'bonus': bonus_puan           # Kelime eşleşmesi var mı?
+                })
+
+        except: continue
+        
+    return sorted(sonuclar, key=lambda x: x['skor'], reverse=True)
 
 # --- 4. ARAYÜZ ---
 
@@ -121,81 +147,77 @@ with st.sidebar:
         if s: st.success(f"{s} kopya silindi.")
         else: st.info("Temiz.")
 
-tab1, tab2 = st.tabs(["📤 Çoklu Karar Yükle", "🔍 Arama Yap"])
+tab1, tab2 = st.tabs(["📤 Çoklu Karar Yükle", "🔍 Hassas Arama"])
 
-# --- ÇOKLU YÜKLEME SİSTEMİ ---
 with tab1:
-    st.info("Birden fazla resim seçebilirsiniz (Ctrl tuşuna basılı tutarak).")
-    
-    # 1. DEĞİŞİKLİK: accept_multiple_files=True
-    uploaded_files = st.file_uploader("Karar Resimlerini Yükle", 
-                                      type=["jpg", "png", "jpeg"], 
-                                      accept_multiple_files=True)
+    st.info("Toplu yükleme yapabilirsiniz.")
+    uploaded_files = st.file_uploader("Karar Resimlerini Yükle", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
     
     if uploaded_files:
-        # Kaç dosya seçildiğini göster
-        st.write(f"📂 Toplam {len(uploaded_files)} adet dosya seçildi.")
-        
-        if st.button("Hepsini Analiz Et ve Kaydet", type="primary"):
-            
-            # İlerleme Çubuğu (Progress Bar)
+        st.write(f"📂 {len(uploaded_files)} dosya seçildi.")
+        if st.button("Analiz Et ve Kaydet", type="primary"):
             progress_bar = st.progress(0)
-            durum_metni = st.empty()
+            basarili, mukerrer, hatali = 0, 0, 0
             
-            basarili = 0
-            mukerrer = 0
-            hatali = 0
-            
-            # 2. DEĞİŞİKLİK: Dosyalar üzerinde döngü
             for i, uploaded_file in enumerate(uploaded_files):
-                dosya_adi = uploaded_file.name
-                durum_metni.text(f"İşleniyor: {dosya_adi}...")
-                
                 try:
                     img = Image.open(uploaded_file)
                     metin = ocr_isleme(img)
-                    
                     if len(metin) > 10:
                         vektor = model.encode(metin, convert_to_tensor=False).astype(np.float32)
-                        
-                        if mukerrer_kontrol(vektor):
-                            mukerrer += 1
+                        if mukerrer_kontrol(vektor): mukerrer += 1
                         else:
-                            if veritabanina_kaydet(metin, vektor):
-                                basarili += 1
-                            else:
-                                hatali += 1
-                    else:
-                        hatali += 1 # Metin okunamadı
-                        
-                except Exception as e:
-                    hatali += 1
-                
-                # Çubuğu güncelle
+                            if veritabanina_kaydet(metin, vektor): basarili += 1
+                            else: hatali += 1
+                    else: hatali += 1
+                except: hatali += 1
                 progress_bar.progress((i + 1) / len(uploaded_files))
             
-            durum_metni.empty()
-            st.success("İşlem Tamamlandı!")
-            
-            # Sonuç Karnesi
-            col1, col2, col3 = st.columns(3)
-            col1.metric("✅ Başarılı", basarili)
-            col2.metric("⛔ Zaten Vardı (Atlandı)", mukerrer)
-            col3.metric("⚠️ Okunamadı/Hata", hatali)
+            st.success("Bitti!")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("✅ Başarılı", basarili)
+            c2.metric("⛔ Mükerrer", mukerrer)
+            c3.metric("⚠️ Hata", hatali)
 
+# --- YENİLENEN ARAMA ARAYÜZÜ ---
 with tab2:
-    sorgu = st.text_input("Arama yapın")
+    col_arama, col_ayar = st.columns([3, 1])
+    
+    with col_arama:
+        sorgu = st.text_input("Aranacak kelime veya konu:", placeholder="Örn: eroin ticareti")
+    
+    with col_ayar:
+        # Hassasiyet Ayarı (Slider)
+        # Düşük (0.1): Her şeyi getirir (Alakasızlar dahil).
+        # Yüksek (0.6): Sadece çok kesin olanları getirir.
+        esik = st.slider("Hassasiyet", min_value=0.0, max_value=1.0, value=0.25, step=0.05)
+        st.caption("Sağa çekerseniz sadece kesin sonuçlar gelir.")
+
     if st.button("Ara"):
         if not sorgu:
             st.warning("Lütfen bir şey yazın.")
         else:
-            with st.spinner("Arşiv taranıyor..."):
-                sonuclar = arama_yap(sorgu)
+            with st.spinner("Hibrit arama yapılıyor (Kelime + Anlam)..."):
+                sonuclar = arama_yap_hibrit(sorgu, esik)
+                
                 if sonuclar:
                     st.success(f"🎯 {len(sonuclar)} sonuç bulundu.")
+                    
                     for s in sonuclar:
                         st.markdown("---")
-                        st.subheader(f"Uygunluk: %{int(s['skor']*100)}")
-                        st.info(s['metin'])
+                        
+                        # Skor Rozetleri
+                        c1, c2 = st.columns([1, 4])
+                        with c1:
+                            st.metric("Toplam Puan", f"%{int(s['skor']*100)}")
+                            
+                            # Eğer kelime bonusu almışsa belirtelim
+                            if s['bonus'] > 0:
+                                st.success("✅ Kelime Eşleşti!")
+                            else:
+                                st.info("🧠 Anlamsal Yakınlık")
+                                
+                        with c2:
+                            st.info(s['metin'])
                 else:
-                    st.warning("Sonuç bulunamadı.")
+                    st.warning("Sonuç bulunamadı. Hassasiyeti düşürüp (sola çekip) tekrar deneyin.")
