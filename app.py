@@ -10,58 +10,36 @@ import time
 # --- 1. AYARLAR ---
 st.set_page_config(page_title="Yargıtay AI Asistanı", layout="wide", page_icon="⚖️")
 
-# --- 2. GÜVENLİK (KARARLI SÜRÜM) ---
-
-# Session State Başlatma
+# --- 2. GÜVENLİK (GİRİŞ KONTROLÜ) ---
 if 'giris_yapildi' not in st.session_state:
     st.session_state['giris_yapildi'] = False
 
-# Eğer giriş yapılmadıysa login ekranını göster
 if not st.session_state['giris_yapildi']:
     st.markdown("## 🔒 Güvenli Yargıtay Sistemi")
     
-    # Şifreyi Belirle (Hata yapısını kaldırdık, düz mantık)
-    gecerli_sifre = "1234" # Varsayılan yedek şifre
-    sifre_kaynagi = "Yedek (1234)"
-    
-    # Secrets kontrolü (Varsa oradan al, yoksa 1234 kalır)
+    gecerli_sifre = "1234" # Varsayılan
     try:
         if "APP_PASSWORD" in st.secrets:
             gecerli_sifre = st.secrets["APP_PASSWORD"]
-            sifre_kaynagi = "Sistem (Secrets)"
-    except:
-        pass # Secrets yoksa hata verme, devam et
+    except: pass
 
-    # Bilgilendirme (Sadece sen gör diye, production'da kaldırılabilir)
-    # st.caption(f"Debug: Şifre kaynağı: {sifre_kaynagi}") 
-
-    girilen_sifre = st.text_input("Erişim Şifresi:", type="password")
+    girilen = st.text_input("Şifre:", type="password")
     
-    if st.button("Giriş Yap", type="primary"):
-        if girilen_sifre == gecerli_sifre:
+    if st.button("Giriş", type="primary"):
+        if girilen == gecerli_sifre:
             st.session_state['giris_yapildi'] = True
-            st.success("Giriş Onaylandı!")
-            time.sleep(0.5) # Kullanıcının mesajı görmesi için minik bir bekleme
+            st.success("Giriş Yapıldı")
+            time.sleep(0.3)
             st.rerun()
         else:
-            st.error("⛔ Hatalı Şifre!")
-            if sifre_kaynagi == "Yedek (1234)":
-                st.warning("İpucu: Sistemde özel şifre ayarlı değil, '1234' deneyin.")
+            st.error("Hatalı Şifre")
+            if gecerli_sifre == "1234": st.caption("İpucu: 1234")
     
-    st.stop() # Kodun geri kalanını kesinlikle çalıştırma
+    st.stop() # Giriş yoksa dur
 
-# ====================================================
-# BURASI SADECE GİRİŞ YAPANLARA AÇIK ALAN
-# ====================================================
-
-# --- YAN MENÜ ---
-with st.sidebar:
-    st.success("✅ Yetkili Girişi")
-    if st.button("🚪 Çıkış Yap"):
-        st.session_state['giris_yapildi'] = False
-        st.rerun()
-    st.divider()
-    st.header("⚙️ Yönetim")
+# ==========================================
+# İÇERİK (SADECE GİRİŞ YAPANLARA)
+# ==========================================
 
 # --- 3. BAĞLANTILAR ---
 try:
@@ -86,40 +64,89 @@ def model_yukle():
 
 model = model_yukle()
 
-# İstatistik Gösterimi
-if supabase:
-    try:
-        res = supabase.table("kararlar").select("id", count="exact").execute()
-        with st.sidebar:
-            st.metric("Toplam Karar", res.count)
-    except:
-        pass
+# --- 4. TEMİZLİK VE YÖNETİM FONKSİYONLARI ---
 
-# --- 4. FONKSİYONLAR ---
+def veritabani_temizle():
+    """Kopya kayıtları veritabanından siler."""
+    if not supabase: return 0
+    # Sadece ID ve Metin çekiyoruz (Hız için)
+    res = supabase.table("kararlar").select("id, metin").execute()
+    if not res.data: return 0
+    
+    gordum = set()
+    silinecek = []
+    
+    for s in res.data:
+        # Metnin ilk 100 karakterini imza olarak kullan
+        imza = s['metin'].strip()[:100]
+        if imza in gordum:
+            silinecek.append(s['id'])
+        else:
+            gordum.add(imza)
+    
+    if silinecek:
+        supabase.table("kararlar").delete().in_("id", silinecek).execute()
+        return len(silinecek)
+    return 0
+
+# --- 5. YAN MENÜ (YÖNETİM PANELİ) ---
+with st.sidebar:
+    st.success("✅ Yetkili Girişi")
+    
+    col_cikis, col_bos = st.columns([1,1])
+    with col_cikis:
+        if st.button("🚪 Çıkış"):
+            st.session_state['giris_yapildi'] = False
+            st.rerun()
+            
+    st.divider()
+    st.header("⚙️ Yönetim Paneli")
+    
+    if supabase:
+        try:
+            # Kayıt Sayısını Göster
+            sayi = supabase.table("kararlar").select("id", count="exact").execute().count
+            st.metric("Toplam Karar", sayi)
+            
+            st.markdown("---")
+            st.write("Veritabanı Bakımı")
+            
+            # --- GERİ GETİRİLEN BUTON BURADA ---
+            if st.button("🧹 Kopyaları Temizle", type="primary"):
+                with st.spinner("Taranıyor..."):
+                    silinen = veritabani_temizle()
+                    if silinen > 0:
+                        st.success(f"{silinen} adet kopya silindi!")
+                        time.sleep(2)
+                        st.rerun() # Sayıyı güncellemek için yenile
+                    else:
+                        st.info("Veritabanı temiz.")
+        except:
+            st.error("Veritabanına bağlanılamadı")
+
+# --- 6. İŞLEM FONKSİYONLARI ---
 
 def ocr_isleme(image):
     img = image.convert('L')
     enhancer = ImageEnhance.Contrast(img)
     img = enhancer.enhance(2.0)
-    try:
-        return pytesseract.image_to_string(img, lang='tur')
-    except:
-        return pytesseract.image_to_string(img)
+    try: return pytesseract.image_to_string(img, lang='tur')
+    except: return pytesseract.image_to_string(img)
 
 def veritabanina_kaydet(metin, vektor):
     if not supabase: return False
-    vektor_json = json.dumps(vektor.tolist())
-    data = {"metin": metin, "vektor": vektor_json}
+    v_json = json.dumps(vektor.tolist())
+    data = {"metin": metin, "vektor": v_json}
     try:
         supabase.table("kararlar").insert(data).execute()
         return True
     except: return False
 
-def mukerrer_kontrol(yeni_vektor):
+def mukerrer_kontrol(yeni_v):
     if not supabase: return False
     res = supabase.table("kararlar").select("vektor").execute()
     if not res.data: return False
-    yeni_v = yeni_vektor.astype(np.float32)
+    yeni_v = yeni_v.astype(np.float32)
     for row in res.data:
         try:
             db_v = np.array(json.loads(row['vektor'])).astype(np.float32)
@@ -129,17 +156,15 @@ def mukerrer_kontrol(yeni_vektor):
 
 def arama_yap_hibrit(sorgu, esik):
     if not supabase: return []
-    try:
-        res = supabase.table("kararlar").select("*").execute()
-        data = res.data
+    try: res = supabase.table("kararlar").select("*").execute()
     except: return []
-    if not data: return []
+    if not res.data: return []
 
     sorgu_v = model.encode(sorgu, convert_to_tensor=False).astype(np.float32)
     sorgu_lower = sorgu.lower()
     sonuclar = []
 
-    for row in data:
+    for row in res.data:
         try:
             db_v = np.array(json.loads(row['vektor'])).astype(np.float32)
             skor = util.cos_sim(sorgu_v, db_v).item()
@@ -150,14 +175,14 @@ def arama_yap_hibrit(sorgu, esik):
         except: continue
     return sorted(sonuclar, key=lambda x: x['skor'], reverse=True)
 
-# --- 5. ARAYÜZ SEKMELERİ ---
+# --- 7. ANA EKRAN SEKMELERİ ---
 
 st.title("⚖️ Yargıtay AI & OCR Sistemi")
 
-tab1, tab2 = st.tabs(["📤 Yükleme", "🔍 Arama"])
+tab1, tab2 = st.tabs(["📤 Çoklu Yükleme", "🔍 Hassas Arama"])
 
 with tab1:
-    files = st.file_uploader("Dosya Seç (Çoklu)", accept_multiple_files=True)
+    files = st.file_uploader("Dosya Seç", accept_multiple_files=True)
     if files and st.button("Kaydet", type="primary"):
         bar = st.progress(0)
         basarili = 0
@@ -166,12 +191,12 @@ with tab1:
                 img = Image.open(f)
                 txt = ocr_isleme(img)
                 if len(txt) > 10:
-                    vec = model.encode(txt, convert_to_tensor=False).astype(np.float32)
-                    if not mukerrer_kontrol(vec):
-                        if veritabanina_kaydet(txt, vec): basarili += 1
+                    v = model.encode(txt, convert_to_tensor=False).astype(np.float32)
+                    if not mukerrer_kontrol(v):
+                        if veritabanina_kaydet(txt, v): basarili += 1
             except: pass
             bar.progress((i+1)/len(files))
-        st.success(f"İşlem bitti. {basarili} yeni karar eklendi.")
+        st.success(f"{basarili} dosya kaydedildi.")
 
 with tab2:
     c1, c2 = st.columns([3,1])
@@ -179,12 +204,11 @@ with tab2:
     with c2: tr = st.slider("Hassasiyet", 0.0, 1.0, 0.25)
     
     if st.button("Ara"):
-        if not q: st.warning("Kelime girin")
-        else:
+        if q:
             with st.spinner("Aranıyor..."):
                 res = arama_yap_hibrit(q, tr)
                 if res:
                     for r in res:
                         st.info(f"Puan: %{int(r['skor']*100)} - {r['metin'][:300]}...")
-                else:
-                    st.warning("Sonuç yok")
+                else: st.warning("Bulunamadı")
+        else: st.warning("Kelime girin")
