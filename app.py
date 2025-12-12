@@ -6,6 +6,7 @@ from sentence_transformers import SentenceTransformer, util
 from supabase import create_client
 import json
 import time
+import html # Metin temizliği için gerekli kütüphane
 
 # --- 1. AYARLAR ---
 st.set_page_config(
@@ -20,33 +21,27 @@ if 'giris_yapildi' not in st.session_state:
     st.session_state['giris_yapildi'] = False
 
 if not st.session_state['giris_yapildi']:
-    # TASARIM DÜZELTME: color: #333 eklendi (Yazıları siyah yapar)
     st.markdown("""
     <style>
     .login-container {
         padding: 40px;
         border-radius: 12px;
         background-color: #ffffff;
-        color: #333333; /* YAZI RENGİ SİYAH OLARAK ZORLANDI */
+        color: #333;
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         text-align: center;
         margin-top: 50px;
         border-top: 6px solid #d32f2f;
-    }
-    /* Kutunun içindeki başlıkları da siyah yap */
-    .login-container h1, .login-container h3 {
-        color: #333333 !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        # "Yetkili Personel Girişi" yazısı kaldırıldı
         st.markdown("""
         <div class='login-container'>
-            <h1 style='font-size: 3rem; margin-bottom: 0;'>⚖️</h1>
-            <h3 style='font-weight: 600; margin-top: 10px;'>Yargıtay İçtihat Ekleme ve Arama</h3>
+            <h1 style='color:#333; margin:0;'>⚖️</h1>
+            <h3 style='color:#333; margin-top:10px;'>İçtihat Ekleme ve Arama</h3>
         </div>
         """, unsafe_allow_html=True)
         st.write("")
@@ -72,24 +67,45 @@ if not st.session_state['giris_yapildi']:
     st.stop()
 
 # ====================================================
-# İÇERİK (GİRİŞ YAPANLAR İÇİN)
+# İÇERİK
 # ====================================================
 
 # --- 3. TASARIM (CSS) ---
 st.markdown("""
 <style>
+/* Kart Tasarımı */
 .decision-card {
-    background-color: white;
-    padding: 15px;
+    background-color: #ffffff;
+    padding: 20px;
     border-radius: 8px;
-    border-left: 5px solid #d32f2f;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    margin-bottom: 15px;
+    border-left: 6px solid #d32f2f;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    margin-bottom: 20px;
+    color: #333333;
 }
-.badge-high { background-color: #2e7d32; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; }
-.badge-med { background-color: #f9a825; color: black; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; }
-.badge-low { background-color: #c62828; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; }
-.bonus-tag { background-color: #e3f2fd; color: #1565c0; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; font-weight: bold; margin-left: 10px; }
+/* Rozetler */
+.badge {
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    display: inline-block;
+}
+.badge-high { background-color: #2e7d32; color: white; }
+.badge-med { background-color: #f9a825; color: black; }
+.badge-low { background-color: #c62828; color: white; }
+
+/* Bonus Etiketi */
+.bonus-tag {
+    background-color: #e3f2fd;
+    color: #0d47a1;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: bold;
+    margin-left: 10px;
+    border: 1px solid #bbdefb;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -198,7 +214,7 @@ def arama_yap_gorsel(sorgu, esik):
 
 # --- 6. ARAYÜZ ---
 
-# YAN MENÜ TASARIMI
+# YAN MENÜ
 with st.sidebar:
     st.header("⚙️ Yönetim Paneli")
     
@@ -209,8 +225,6 @@ with st.sidebar:
         except: st.error("Bağlantı Yok")
     
     st.markdown("---")
-    
-    # Yönetim Araçları
     st.write("🔧 Araçlar")
     if st.button("🧹 Kopyaları Sil", use_container_width=True):
         n = akilli_temizlik()
@@ -223,14 +237,13 @@ with st.sidebar:
             st.warning("Sıfırlandı")
             time.sleep(1); st.rerun()
 
-    # ÇIKIŞ BUTONU EN ALTA ALINDI VE BOŞLUK EKLENDİ
     st.markdown("<br>" * 5, unsafe_allow_html=True) 
     st.markdown("---")
     if st.button("🚪 Güvenli Çıkış", type="secondary", use_container_width=True):
         st.session_state['giris_yapildi'] = False
         st.rerun()
 
-# ANA SAYFA BAŞLIĞI
+# ANA BAŞLIK
 st.markdown("""
 <div style="background-color:#d32f2f;padding:20px;border-radius:10px;margin-bottom:25px;">
     <h1 style="color:white;text-align:center;margin:0;">İçtihat Ekleme ve Arama Platformu</h1>
@@ -242,15 +255,13 @@ tab1, tab2 = st.tabs(["📤 **Karar Yükleme Merkezi**", "🔍 **Akıllı Arama 
 
 with tab1:
     st.markdown("### 📄 Dosya Yükleme")
-    st.caption("Yargıtay kararlarının fotoğraflarını buraya sürükleyin. Sistem otomatik okur ve arşivler.")
-    
+    st.caption("Yargıtay kararlarını yükleyin. Sistem otomatik işler.")
     files = st.file_uploader("", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
     
     if files:
-        if st.button(f"🚀 {len(files)} Adet Kararı İşle ve Kaydet", type="primary", use_container_width=True):
+        if st.button(f"🚀 {len(files)} Adet Kararı İşle", type="primary", use_container_width=True):
             bar = st.progress(0)
             basarili, mukerrer = 0, 0
-            
             for i, f in enumerate(files):
                 try:
                     img = Image.open(f)
@@ -262,14 +273,13 @@ with tab1:
                             if veritabanina_kaydet(txt, v): basarili += 1
                 except: pass
                 bar.progress((i+1)/len(files))
-            
             st.balloons()
-            st.success(f"İşlem Tamamlandı! ✅ {basarili} Eklendi, ⛔ {mukerrer} Mükerrer.")
+            st.success(f"Tamamlandı: {basarili} Eklendi, {mukerrer} Mükerrer.")
 
 with tab2:
     col_s, col_f = st.columns([3, 1])
-    with col_s: q = st.text_input("Arama Kelimesi", placeholder="Örn: kıdem tazminatı, uyuşturucu ticareti...", label_visibility="collapsed")
-    with col_f: sens = st.slider("Hassasiyet Ayarı", 0.0, 1.0, 0.25)
+    with col_s: q = st.text_input("Arama Kelimesi", placeholder="Örn: kıdem tazminatı...", label_visibility="collapsed")
+    with col_f: sens = st.slider("Hassasiyet", 0.0, 1.0, 0.25)
 
     if st.button("🔎 İçtihatlarda Ara", type="primary", use_container_width=True):
         if q:
@@ -279,19 +289,25 @@ with tab2:
                     st.markdown(f"### 🎯 {len(res)} Sonuç Bulundu")
                     for r in res:
                         p = int(r['skor']*100)
-                        if p >= 80: css_class = "badge-high"; label = "Yüksek"
-                        elif p >= 50: css_class = "badge-med"; label = "Orta"
-                        else: css_class = "badge-low"; label = "Düşük"
+                        
+                        # Stil belirleme
+                        if p >= 80: badge = "badge-high"; label = "Yüksek"
+                        elif p >= 50: badge = "badge-med"; label = "Orta"
+                        else: badge = "badge-low"; label = "Düşük"
                         
                         bonus_html = '<span class="bonus-tag">✅ Kelime Var</span>' if r['bonus'] > 0 else ''
                         
+                        # --- KRİTİK DÜZELTME: html.escape ---
+                        # Metni HTML için güvenli hale getiriyoruz.
+                        temiz_metin = html.escape(r['metin'])
+                        
                         st.markdown(f"""
                         <div class="decision-card">
-                            <div style="margin-bottom:8px;">
-                                <span class="{css_class}">%{p} - {label}</span>
+                            <div style="margin-bottom:10px; display:flex; align-items:center;">
+                                <span class="badge {badge}">%{p} - {label}</span>
                                 {bonus_html}
                             </div>
-                            <div style="color:#333;">{r['metin']}</div>
+                            <div style="line-height:1.5;">{temiz_metin}</div>
                         </div>
                         """, unsafe_allow_html=True)
                 else: st.warning("Sonuç bulunamadı.")
