@@ -1,52 +1,83 @@
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageOps, ImageEnhance
 import pytesseract
 import numpy as np
 from sentence_transformers import SentenceTransformer, util
 from supabase import create_client
 import json
 
-# --- SAYFA AYARLARI ---
-st.set_page_config(page_title="Yargıtay Akıllı Arşiv", layout="wide", page_icon="⚖️")
+# --- 1. AYARLAR VE KURULUM ---
+st.set_page_config(page_title="Yargıtay AI Asistanı", layout="wide", page_icon="⚖️")
 
-# --- 1. GÜVENLİ BAĞLANTILAR ---
-# Gerçek projelerde şifreler koda yazılmaz. st.secrets'tan çekilir.
+# Windows kullanıcıları için Tesseract yolu (Eğer sunucuda çalışıyorsa bu satırı yorum yapabilirsin)
+# pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
+# --- 2. GÜVENLİK VE BAĞLANTILAR ---
+# Not: GitHub'a yüklerken şifreleri buraya yazma, Streamlit Secrets kullan!
+# Local test için geçici olarak buraya yazabilirsin.
 try:
-    supa_url = st.secrets["SUPABASE_URL"]
-    supa_key = st.secrets["SUPABASE_KEY"]
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 except:
-    st.error("Veritabanı anahtarları bulunamadı! Lütfen Streamlit Secrets ayarlarını yapın.")
-    st.stop()
+    # Eğer secrets yoksa (bilgisayarında test ediyorsan) burayı doldur:
+    SUPABASE_URL = "SENIN_SUPABASE_URL_ADRESIN"
+    SUPABASE_KEY = "SENIN_SUPABASE_ANON_KEY_ANAHTARIN"
 
 @st.cache_resource
-def init_db():
-    return create_client(supa_url, supa_key)
+def init_supabase():
+    try:
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        return None
 
-supabase = init_db()
+supabase = init_supabase()
 
 @st.cache_resource
-def load_ai_model():
+def model_yukle():
     return SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 
-model = load_ai_model()
+model = model_yukle()
 
-# --- 2. FONKSİYONLAR ---
+# --- 3. KRİTİK BÖLÜM: GÖRÜNTÜ İYİLEŞTİRME ---
+
+def resim_on_isleme(image):
+    """
+    Renkli ve karmaşık arka planlı resimleri OCR için hazırlar.
+    Resmi gri yapar ve kontrastı artırarak yazıları ortaya çıkarır.
+    """
+    # 1. Gri tona çevir (Siyah-Beyaz)
+    img = image.convert('L')
+    
+    # 2. Kontrastı artır (Yazıyı arka plandan ayır)
+    enhancer = ImageEnhance.Contrast(img)
+    img = enhancer.enhance(2.0)  # Kontrastı 2 katına çıkar
+    
+    # 3. (Opsiyonel) Keskinleştirme
+    enhancer_sharp = ImageEnhance.Sharpness(img)
+    img = enhancer_sharp.enhance(1.5)
+    
+    return img
 
 def ocr_isleme(image):
-    """Görüntüden Türkçe metin okur."""
+    """İşlenmiş görüntüden metin okur."""
+    processed_image = resim_on_isleme(image)
     try:
-        text = pytesseract.image_to_string(image, lang='tur')
-        return text
+        # Türkçe dil desteği ile oku
+        text = pytesseract.image_to_string(processed_image, lang='tur')
+        return text, processed_image
     except:
-        # Dil paketi hatası olursa İngilizce dene
-        return pytesseract.image_to_string(image)
+        # Hata olursa veya dil paketi yoksa varsayılanı dene
+        text = pytesseract.image_to_string(processed_image)
+        return text, processed_image
 
-def veritabanina_yaz(metin, vektor):
-    """Veriyi buluta güvenli şekilde yazar."""
+def veritabanina_kaydet(metin, vektor):
+    if not supabase:
+        st.error("Veritabanı bağlantısı yok!")
+        return False
+        
     vektor_json = json.dumps(vektor.tolist())
     data = {"metin": metin, "vektor": vektor_json}
     
-    # Supabase'e yazma işlemi
     try:
         supabase.table("kararlar").insert(data).execute()
         return True
@@ -54,93 +85,96 @@ def veritabanina_yaz(metin, vektor):
         st.error(f"Kayıt Hatası: {e}")
         return False
 
-def arama_motoru(sorgu_metni):
-    """Buluttaki tüm verileri çeker ve vektör benzerliği hesaplar."""
-    # Not: Milyonlarca veri olsaydı veritabanı tarafında (pgvector) arama yapardık.
-    # Ancak binlerce veri için Python tarafında yapmak daha hızlı ve bedavadır.
-    
-    # Tüm veriyi çek
+def arama_yap(sorgu):
+    if not supabase:
+        return []
+        
     response = supabase.table("kararlar").select("*").execute()
     db_verileri = response.data
     
     if not db_verileri:
         return []
 
-    sorgu_vektoru = model.encode(sorgu_metni, convert_to_tensor=True)
+    sorgu_vektoru = model.encode(sorgu, convert_to_tensor=True)
     sonuclar = []
 
     for satir in db_verileri:
-        # Kayıtlı vektörü JSON'dan geri çevir
         db_vektor = np.array(json.loads(satir['vektor']))
-        
-        # Matematiksel benzerlik hesabı (Cosine Similarity)
         skor = util.cos_sim(sorgu_vektoru, db_vektor).item()
         
-        # %30'un altındaki benzerlikleri gösterme (Gürültüyü engelle)
-        if skor > 0.30:
-            sonuclar.append({
-                "metin": satir['metin'],
-                "tarih": satir['tarih'],
-                "skor": skor
-            })
-            
-    # Skora göre sırala (En yüksek en üstte)
+        # Skor %35'in üzerindeyse göster (Gürültüyü engelle)
+        if skor > 0.35:
+            sonuclar.append({'metin': satir['metin'], 'skor': skor, 'tarih': satir.get('created_at', '')})
+
     return sorted(sonuclar, key=lambda x: x['skor'], reverse=True)
 
-# --- 3. KULLANICI ARAYÜZÜ ---
+# --- 4. ARAYÜZ (FRONTEND) ---
 
-st.title("⚖️ Yargıtay İçtihat & Karar Bankası")
-st.markdown("---")
+st.title("⚖️ Yargıtay AI & OCR Sistemi")
+st.markdown("**Gelişmiş Görüntü İşleme Modülü Devrede:** Karmaşık arka planlı kararları okuyabilir.")
 
-menu = st.sidebar.selectbox("Menü", ["Karar Yükle", "Akıllı Arama"])
+tab1, tab2 = st.tabs(["📤 Karar Yükle", "🔍 Arşivde Ara"])
 
-if menu == "Karar Yükle":
-    st.header("📄 Yeni Karar Ekleme")
-    st.info("Yüklediğiniz fotoğraflar OCR ile taranır, yapay zeka ile anlamlandırılır ve buluta kaydedilir.")
-    
-    uploaded_file = st.file_uploader("Karar Fotoğrafı (JPG/PNG)", type=["jpg", "png", "jpeg"])
-    
+with tab1:
+    st.header("Karar Fotoğrafı Yükle")
+    uploaded_file = st.file_uploader("Görüntü seç (JPG, PNG)", type=["jpg", "png", "jpeg"])
+
     if uploaded_file:
-        image = Image.open(uploaded_file)
-        st.image(image, width=400, caption="Önizleme")
+        original_image = Image.open(uploaded_file)
         
-        if st.button("Sisteme Kaydet", type="primary"):
-            with st.status("İşlem yapılıyor...", expanded=True) as status:
-                st.write("📝 Metin okunuyor (OCR)...")
-                okunan_metin = ocr_isleme(image)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.image(original_image, caption="Orjinal Görüntü", width=300)
+        
+        if st.button("Analiz Et ve Kaydet", type="primary"):
+            with st.status("Görüntü işleniyor...", expanded=True) as status:
                 
-                if len(okunan_metin) > 50:
-                    st.write("🧠 Yapay zeka vektör oluşturuyor...")
+                # 1. OCR İşlemi
+                st.write("🖼️ Görüntü temizleniyor ve kontrast ayarlanıyor...")
+                okunan_metin, islenmis_resim = ocr_isleme(original_image)
+                
+                # İşlenmiş resmi kullanıcıya gösterelim (Kanıt)
+                with col2:
+                    st.image(islenmis_resim, caption="Bilgisayarın Gördüğü (İşlenmiş)", width=300)
+
+                # 2. Sonuç Kontrolü
+                if len(okunan_metin.strip()) > 20:
+                    st.write("📝 Metin başarıyla okundu.")
+                    st.code(okunan_metin) # Okunan metni göster
+                    
+                    # 3. Vektör ve Kayıt
+                    st.write("🧠 Yapay zeka anlamlandırıyor...")
                     vektor = model.encode(okunan_metin)
                     
                     st.write("☁️ Buluta kaydediliyor...")
-                    basari = veritabanina_yaz(okunan_metin, vektor)
+                    basari = veritabanina_kaydet(okunan_metin, vektor)
                     
                     if basari:
-                        status.update(label="İşlem Başarılı!", state="complete", expanded=False)
-                        st.success("Karar başarıyla arşivlendi!")
-                        with st.expander("Okunan Metni Gör"):
-                            st.text(okunan_metin)
+                        status.update(label="İşlem Başarıyla Tamamlandı!", state="complete", expanded=False)
+                        st.success("✅ Karar veritabanına güvenle eklendi.")
+                    else:
+                        status.update(label="Veritabanı Hatası", state="error")
                 else:
-                    status.update(label="Hata", state="error")
-                    st.error("Görüntüden anlamlı bir metin okunamadı. Lütfen daha net bir fotoğraf yükleyin.")
+                    status.update(label="Okuma Başarısız", state="error")
+                    st.error("⚠️ Resimden anlamlı bir yazı çıkarılamadı.")
+                    st.warning("İpucu: 'Bilgisayarın Gördüğü' resim simsiyah veya bembeyaz ise kontrast ayarı gerekebilir.")
 
-elif menu == "Akıllı Arama":
-    st.header("🔍 İçerik Bazlı Arama")
-    st.caption("Kelime eşleşmesi değil, anlam eşleşmesi yapılır. (Örn: 'İş kazası' yazsanız bile 'tazminat' geçen kararları bulabilir)")
+with tab2:
+    st.header("Akıllı Arama Motoru")
+    arama_metni = st.text_input("Hukuki konu, kanun maddesi veya anahtar kelime:")
     
-    sorgu = st.text_input("Arama ifadesini girin:", placeholder="Örn: kıdem tazminatı faiz başlangıcı")
-    
-    if st.button("Ara"):
-        with st.spinner("Arşiv taranıyor..."):
-            sonuclar = arama_motoru(sorgu)
-            
-            if sonuclar:
-                st.success(f"{len(sonuclar)} adet ilgili karar bulundu.")
-                for i, res in enumerate(sonuclar[:10]): # İlk 10 sonuç
-                    st.markdown(f"### {i+1}. Sonuç (Uygunluk: %{int(res['skor']*100)})")
-                    st.caption(f"📅 Eklenme Tarihi: {res['tarih'][:10]}")
-                    st.info(res['metin'][:600] + " ...[devamı var]")
-                    st.divider()
-            else:
-                st.warning("Aradığınız kritere uygun karar bulunamadı.")
+    if st.button("Araştır"):
+        if not arama_metni:
+            st.warning("Lütfen bir arama terimi girin.")
+        else:
+            with st.spinner("Veritabanı taranıyor..."):
+                sonuclar = arama_yap(arama_metni)
+                
+                if sonuclar:
+                    st.success(f"🎯 {len(sonuclar)} adet ilgili karar bulundu.")
+                    for i, res in enumerate(sonuclar):
+                        st.markdown("---")
+                        st.subheader(f"{i+1}. Sonuç (Uygunluk: %{int(res['skor']*100)})")
+                        st.info(res['metin'])
+                else:
+                    st.warning("😔 Aradığınız kritere uygun karar bulunamadı.")
