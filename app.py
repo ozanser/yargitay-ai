@@ -6,7 +6,7 @@ from sentence_transformers import SentenceTransformer, util
 from supabase import create_client
 import json
 
-# --- 1. AYARLAR VE KURULUM ---
+# --- 1. AYARLAR ---
 st.set_page_config(page_title="Yargıtay AI Asistanı", layout="wide", page_icon="⚖️")
 
 # --- 2. GÜVENLİK VE BAĞLANTILAR ---
@@ -14,9 +14,9 @@ try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 except:
-    # Local test için (Secrets yoksa)
-    SUPABASE_URL = "SENIN_SUPABASE_URL_ADRESIN"
-    SUPABASE_KEY = "SENIN_SUPABASE_ANON_KEY_ANAHTARIN"
+    # Local test
+    SUPABASE_URL = "SENIN_URL"
+    SUPABASE_KEY = "SENIN_KEY"
 
 @st.cache_resource
 def init_supabase():
@@ -33,10 +33,9 @@ def model_yukle():
 
 model = model_yukle()
 
-# --- 3. GÖRÜNTÜ İŞLEME ---
+# --- 3. YARDIMCI FONKSİYONLAR ---
 
 def resim_on_isleme(image):
-    """Görüntüyü gri yapar ve kontrastı artırır."""
     img = image.convert('L')
     enhancer = ImageEnhance.Contrast(img)
     img = enhancer.enhance(2.0)
@@ -45,7 +44,6 @@ def resim_on_isleme(image):
     return img
 
 def ocr_isleme(image):
-    """İşlenmiş görüntüden metin okur."""
     processed_image = resim_on_isleme(image)
     try:
         text = pytesseract.image_to_string(processed_image, lang='tur')
@@ -53,6 +51,33 @@ def ocr_isleme(image):
     except:
         text = pytesseract.image_to_string(processed_image)
         return text, processed_image
+
+def mukerrer_kontrol(yeni_vektor):
+    """
+    Veritabanındaki tüm kararları kontrol eder.
+    Eğer %90 üzeri benzerlik bulursa True (Var) döner.
+    """
+    response = supabase.table("kararlar").select("*").execute()
+    db_verileri = response.data
+    
+    if not db_verileri:
+        return False, None
+
+    # Yeni vektörü tensör yapma, numpy kalsın
+    yeni_vektor_np = yeni_vektor
+
+    for satir in db_verileri:
+        try:
+            db_vektor = np.array(json.loads(satir['vektor']))
+            skor = util.cos_sim(yeni_vektor_np, db_vektor).item()
+            
+            # %90 Benzerlik Eşiği (OCR hatalarını tolere etmek için %95 yerine %90 iyidir)
+            if skor > 0.90:
+                return True, satir # Mükerrer bulundu, bulunan kaydı döndür
+        except:
+            continue
+            
+    return False, None
 
 def veritabanina_kaydet(metin, vektor):
     if not supabase:
@@ -69,42 +94,38 @@ def veritabanina_kaydet(metin, vektor):
         st.error(f"Kayıt Hatası: {e}")
         return False
 
-# --- 4. DÜZELTİLEN FONKSİYON (HATAYI ÇÖZEN KISIM) ---
 def arama_yap(sorgu):
-    if not supabase:
-        return []
-        
+    if not supabase: return []
     response = supabase.table("kararlar").select("*").execute()
     db_verileri = response.data
-    
-    if not db_verileri:
-        return []
+    if not db_verileri: return []
 
-    # DÜZELTME: convert_to_tensor=False yaptık.
-    # Artık bu da bir Numpy Array oldu, veritabanı verisiyle uyumlu.
     sorgu_vektoru = model.encode(sorgu, convert_to_tensor=False)
-    
     sonuclar = []
 
     for satir in db_verileri:
         try:
-            # Veritabanından gelen veri (Numpy Array)
             db_vektor = np.array(json.loads(satir['vektor']))
-            
-            # İkisi de Numpy Array olduğu için artık hata vermez
             skor = util.cos_sim(sorgu_vektoru, db_vektor).item()
-            
             if skor > 0.35:
                 sonuclar.append({'metin': satir['metin'], 'skor': skor, 'tarih': satir.get('created_at', '')})
-        except Exception as e:
-            continue # Hatalı bir kayıt varsa atla, programı çökertme
+        except: continue
 
     return sorted(sonuclar, key=lambda x: x['skor'], reverse=True)
 
-# --- 5. ARAYÜZ ---
+# --- 4. ARAYÜZ ---
 
 st.title("⚖️ Yargıtay AI & OCR Sistemi")
-st.markdown("**Gelişmiş Görüntü İşleme Modülü Devrede**")
+
+# --- YENİ ÖZELLİK: YAN MENÜ ---
+with st.sidebar:
+    st.header("⚙️ Yönetim Paneli")
+    st.info("Veritabanı durumunu buradan kontrol edebilirsiniz.")
+    
+    if st.button("🧹 Mükerrer Kayıtları Temizle"):
+        # Basit bir temizlik mantığı: Aynı metne sahip olanları siler
+        st.warning("Bu işlem henüz otomatikleştirilmedi. Şu an için manuel kontrol önerilir.")
+        # İleride buraya otomatik silme kodu ekleyebiliriz.
 
 tab1, tab2 = st.tabs(["📤 Karar Yükle", "🔍 Arşivde Ara"])
 
@@ -114,35 +135,37 @@ with tab1:
 
     if uploaded_file:
         original_image = Image.open(uploaded_file)
-        
         col1, col2 = st.columns(2)
         with col1:
-            st.image(original_image, caption="Orjinal Görüntü", width=300)
+            st.image(original_image, caption="Orjinal", width=300)
         
         if st.button("Analiz Et ve Kaydet", type="primary"):
-            with st.status("Görüntü işleniyor...", expanded=True) as status:
-                st.write("🖼️ Görüntü temizleniyor...")
-                okunan_metin, islenmis_resim = ocr_isleme(original_image)
+            with st.status("İşlemler yapılıyor...", expanded=True) as status:
                 
+                # 1. OCR
+                st.write("🖼️ Görüntü işleniyor...")
+                okunan_metin, islenmis_resim = ocr_isleme(original_image)
                 with col2:
-                    st.image(islenmis_resim, caption="Bilgisayarın Gördüğü", width=300)
+                    st.image(islenmis_resim, caption="İşlenmiş", width=300)
 
                 if len(okunan_metin.strip()) > 20:
-                    st.write("📝 Metin okundu.")
-                    st.code(okunan_metin)
-                    
-                    st.write("🧠 Yapay zeka işliyor...")
-                    # Kayıtta Numpy kullanmaya devam ediyoruz
+                    st.write("📝 Metin Vektörleştiriliyor...")
                     vektor = model.encode(okunan_metin, convert_to_tensor=False)
                     
-                    st.write("☁️ Kaydediliyor...")
-                    basari = veritabanina_kaydet(okunan_metin, vektor)
+                    # 2. MÜKERRER KONTROLÜ (YENİ)
+                    st.write("🔍 Benzerlik kontrolü yapılıyor...")
+                    var_mi, eski_kayit = mukerrer_kontrol(vektor)
                     
-                    if basari:
-                        status.update(label="Başarılı!", state="complete", expanded=False)
-                        st.success("✅ Kaydedildi.")
+                    if var_mi:
+                        status.update(label="Kayıt Başarısız: Mükerrer!", state="error", expanded=True)
+                        st.error("⛔ Bu karar zaten sistemde kayıtlı!")
+                        st.warning(f"Sistemdeki benzer kayıt: \n\n {eski_kayit['metin'][:100]}...")
                     else:
-                        status.update(label="Hata", state="error")
+                        st.write("☁️ Kaydediliyor...")
+                        basari = veritabanina_kaydet(okunan_metin, vektor)
+                        if basari:
+                            status.update(label="Kaydedildi", state="complete")
+                            st.success("✅ Karar başarıyla eklendi.")
                 else:
                     status.update(label="Okunamadı", state="error")
                     st.error("⚠️ Yazı okunamadı.")
@@ -150,14 +173,12 @@ with tab1:
 with tab2:
     st.header("Akıllı Arama")
     arama_metni = st.text_input("Arama terimi girin:")
-    
     if st.button("Araştır"):
         if not arama_metni:
             st.warning("Bir şeyler yazın.")
         else:
             with st.spinner("Taranıyor..."):
                 sonuclar = arama_yap(arama_metni)
-                
                 if sonuclar:
                     st.success(f"🎯 {len(sonuclar)} sonuç bulundu.")
                     for i, res in enumerate(sonuclar):
