@@ -8,7 +8,7 @@ import json
 import time
 
 # --- 1. AYARLAR ---
-st.set_page_config(page_title="Yargıtay AI (Tamir)", layout="wide", page_icon="⚖️")
+st.set_page_config(page_title="Yargıtay AI Asistanı", layout="wide", page_icon="⚖️")
 
 # --- 2. GÜVENLİK ---
 if 'giris_yapildi' not in st.session_state:
@@ -52,58 +52,36 @@ def model_yukle():
 
 model = model_yukle()
 
-# --- 4. GELİŞMİŞ TEMİZLİK ROBOTU (YENİ) ---
+# --- 4. TEMİZLİK VE YÖNETİM ---
 def akilli_temizlik():
-    """
-    Metin eşleşmesine değil, VEKTÖR (Anlam) eşleşmesine bakar.
-    OCR hatalarına rağmen kopyaları bulur.
-    """
     if not supabase: return 0
-    
-    # Tüm vektörleri çek
     res = supabase.table("kararlar").select("id, vektor").execute()
-    data = res.data
-    if not data: return 0
+    if not res.data: return 0
 
-    silinecek_idler = []
-    saklanan_vektorler = [] # (id, numpy_vektor)
+    silinecek = []
+    saklanan = [] # (id, vektor)
 
-    for satir in data:
+    for satir in res.data:
         try:
-            # Mevcut satırın vektörü
-            su_anki_vektor = np.array(json.loads(satir['vektor'])).astype(np.float32)
-            
-            kopya_mi = False
-            # Daha önce sakladıklarımızla karşılaştır
-            for sakli_id, sakli_vektor in saklanan_vektorler:
-                skor = util.cos_sim(su_anki_vektor, sakli_vektor).item()
-                
-                # EŞİK: %95'ten fazla benziyorsa bu bir kopyadır
-                if skor > 0.95:
-                    kopya_mi = True
+            v_curr = np.array(json.loads(satir['vektor'])).astype(np.float32)
+            kopya = False
+            for _, v_sakli in saklanan:
+                if util.cos_sim(v_curr, v_sakli).item() > 0.95:
+                    kopya = True
                     break
-            
-            if kopya_mi:
-                silinecek_idler.append(satir['id'])
-            else:
-                saklanan_vektorler.append((satir['id'], su_anki_vektor))
-                
+            if kopya: silinecek.append(satir['id'])
+            else: saklanan.append((satir['id'], v_curr))
         except: continue
 
-    # Toplu Silme
-    if silinecek_idler:
-        # Supabase API limiti olduğu için 20'şer 20'şer siliyoruz
-        chunk_size = 20
-        for i in range(0, len(silinecek_idler), chunk_size):
-            chunk = silinecek_idler[i:i + chunk_size]
-            supabase.table("kararlar").delete().in_("id", chunk).execute()
-            
-    return len(silinecek_idler)
+    if silinecek:
+        # Parça parça sil (Timeout yememek için)
+        chunk = 20
+        for i in range(0, len(silinecek), chunk):
+            supabase.table("kararlar").delete().in_("id", silinecek[i:i+chunk]).execute()
+    return len(silinecek)
 
 def veritabani_sifirla():
-    """HER ŞEYİ SİLER (Dikkatli Kullanın)"""
     if not supabase: return False
-    # Tüm ID'leri çekip siler
     res = supabase.table("kararlar").select("id").execute()
     ids = [d['id'] for d in res.data]
     if ids:
@@ -111,7 +89,54 @@ def veritabani_sifirla():
              supabase.table("kararlar").delete().in_("id", ids[i:i+20]).execute()
     return True
 
-# --- 5. İŞLEM FONKSİYONLARI ---
+# --- 5. YAN MENÜ (DÜZELTİLDİ) ---
+with st.sidebar:
+    st.success("✅ Yetkili Girişi")
+    if st.button("🚪 Çıkış"):
+        st.session_state['giris_yapildi'] = False
+        st.rerun()
+    
+    st.divider()
+    st.header("⚙️ Veritabanı")
+    
+    if supabase:
+        # İstatistik Gösterimi (Hata verirse sadece burası hata verir)
+        try:
+            sayi = supabase.table("kararlar").select("id", count="exact").execute().count
+            st.metric("Toplam Karar", sayi)
+        except Exception as e:
+            st.caption(f"Sayaç hatası: {e}")
+
+        st.write("---")
+        
+        # TEMİZLİK BUTONU (Try-Except Bloğundan Çıkarıldı)
+        if st.button("🧹 Akıllı Temizlik", type="primary"):
+            with st.spinner("Kopyalar aranıyor..."):
+                try:
+                    silinen = akilli_temizlik()
+                    if silinen > 0:
+                        st.success(f"{silinen} kopya silindi!")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.info("Kopya yok.")
+                except Exception as e:
+                    st.error(f"Temizlik hatası: {e}")
+
+        # SIFIRLAMA BUTONU
+        with st.expander("⚠️ Tehlikeli Bölge"):
+            if st.button("TÜMÜNÜ SİL"):
+                try:
+                    veritabani_sifirla()
+                    st.warning("Veritabanı sıfırlandı!")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Silme hatası: {e}")
+    else:
+        st.error("Supabase Bağlantısı Yok")
+
+# --- 6. İŞLEM FONKSİYONLARI ---
 def ocr_isleme(image):
     img = image.convert('L')
     enhancer = ImageEnhance.Contrast(img)
@@ -129,7 +154,6 @@ def veritabanina_kaydet(metin, vektor):
     except: return False
 
 def mukerrer_kontrol(yeni_v):
-    # Kayıt anında hızlı kontrol
     if not supabase: return False
     res = supabase.table("kararlar").select("vektor").execute()
     if not res.data: return False
@@ -137,12 +161,11 @@ def mukerrer_kontrol(yeni_v):
     for row in res.data:
         try:
             db_v = np.array(json.loads(row['vektor'])).astype(np.float32)
-            if util.cos_sim(yeni_v, db_v).item() > 0.95: return True # Eşik %95
+            if util.cos_sim(yeni_v, db_v).item() > 0.95: return True
         except: continue
     return False
 
 def arama_yap_gorsel(sorgu):
-    """Eski güzel yüzde göstergeli arama"""
     if not supabase: return []
     try: res = supabase.table("kararlar").select("*").execute()
     except: return []
@@ -156,67 +179,17 @@ def arama_yap_gorsel(sorgu):
         try:
             db_v = np.array(json.loads(row['vektor'])).astype(np.float32)
             skor = util.cos_sim(sorgu_v, db_v).item()
-            
-            # Kelime Bonusu (Varsa %20 ekle ama 100'ü geçirme)
-            bonus = 0.0
-            if sorgu_lower in row['metin'].lower():
-                bonus = 0.20
-            
+            bonus = 0.20 if sorgu_lower in row['metin'].lower() else 0.0
             toplam = skor + bonus
-            
-            # Baraj: %25 altı çöp
             if toplam > 0.25:
                 sonuclar.append({'metin': row['metin'], 'skor': toplam})
         except: continue
-    
     return sorted(sonuclar, key=lambda x: x['skor'], reverse=True)
 
-# --- 6. ARAYÜZ ---
-
+# --- 7. ARAYÜZ ---
 st.title("⚖️ Yargıtay AI & OCR Sistemi")
 
-# YAN MENÜ (YÖNETİM)
-with st.sidebar:
-    st.success("✅ Yetkili Girişi")
-    if st.button("🚪 Çıkış"):
-        st.session_state['giris_yapildi'] = False
-        st.rerun()
-    
-    st.divider()
-    st.header("⚙️ Veritabanı Yönetimi")
-    
-    if supabase:
-        try:
-            sayi = supabase.table("kararlar").select("id", count="exact").execute().count
-            st.metric("Toplam Karar", sayi)
-            
-            st.write("---")
-            st.write("🔧 Bakım Araçları")
-            
-            # GELİŞMİŞ TEMİZLİK BUTONU
-            if st.button("🧹 Akıllı Temizlik (Vektör)", type="primary"):
-                with st.spinner("Yapay Zeka kopyaları arıyor..."):
-                    silinen = akilli_temizlik()
-                    if silinen > 0:
-                        st.success(f"{silinen} kopya silindi!")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.info("Kopya bulunamadı.")
-            
-            st.write("")
-            # SIFIRLAMA BUTONU (Kırmızı)
-            with st.expander("⚠️ Tehlikeli Bölge"):
-                if st.button("Tüm Veritabanını SİL"):
-                    veritabani_sifirla()
-                    st.warning("Veritabanı sıfırlandı!")
-                    time.sleep(1)
-                    st.rerun()
-
-        except: st.error("Bağlantı Hatası")
-
-# ANA EKRAN
-tab1, tab2 = st.tabs(["📤 Karar Yükle", "🔍 Arama Yap"])
+tab1, tab2 = st.tabs(["📤 Yükleme", "🔍 Arama"])
 
 with tab1:
     files = st.file_uploader("Dosya Seç", accept_multiple_files=True)
@@ -230,48 +203,34 @@ with tab1:
                 txt = ocr_isleme(img)
                 if len(txt) > 10:
                     v = model.encode(txt, convert_to_tensor=False).astype(np.float32)
-                    # Yüklerken de sıkı kontrol
                     if mukerrer_kontrol(v):
                         mukerrer_sayi += 1
                     else:
                         if veritabanina_kaydet(txt, v): basarili += 1
             except: pass
             bar.progress((i+1)/len(files))
-        
-        st.success(f"İşlem bitti.")
+        st.success("İşlem Tamamlandı")
         c1, c2 = st.columns(2)
         c1.metric("Eklenen", basarili)
         c2.metric("Mükerrer (Atlandı)", mukerrer_sayi)
 
 with tab2:
-    sorgu = st.text_input("Arama Terimi:", placeholder="Örn: kıdem tazminatı faiz")
+    sorgu = st.text_input("Arama:", placeholder="Örn: kıdem tazminatı")
     if st.button("Ara"):
         if sorgu:
-            with st.spinner("Taranıyor..."):
+            with st.spinner("Aranıyor..."):
                 res = arama_yap_gorsel(sorgu)
                 if res:
-                    st.success(f"{len(res)} sonuç bulundu.")
+                    st.success(f"{len(res)} sonuç.")
                     for r in res:
                         st.markdown("---")
-                        # ESKİ GÜZEL GÖRÜNÜM GERİ GELDİ
                         c1, c2 = st.columns([1, 4])
                         with c1:
-                            # Büyük Puan Göstergesi
                             puan = int(r['skor'] * 100)
-                            if puan > 100: puan = 100 # Bonusla 100'ü geçerse düzelt
-                            
+                            if puan > 100: puan = 100
                             st.metric("Uygunluk", f"%{puan}")
-                            
-                            if puan > 80:
-                                st.success("Çok Yüksek")
-                            elif puan > 50:
-                                st.warning("Orta")
-                            else:
-                                st.info("Düşük")
-                                
-                        with c2:
-                            st.info(r['metin'])
-                else:
-                    st.warning("Sonuç bulunamadı.")
-        else:
-            st.warning("Lütfen bir şey yazın.")
+                            if puan > 80: st.success("Yüksek")
+                            elif puan > 50: st.warning("Orta")
+                            else: st.info("Düşük")
+                        with c2: st.info(r['metin'])
+                else: st.warning("Sonuç yok")
